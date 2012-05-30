@@ -342,7 +342,7 @@ class parser_t {
     event_block_list_t global_event_blocks;
     
     /** Current block level io redirections  */
-    io_data_t *block_io;
+    io_chain_t block_io;
     
     /**
       Evaluate the expressions contained in cmd.

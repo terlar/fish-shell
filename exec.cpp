@@ -477,6 +477,112 @@ static io_data_t *io_transmogrify( io_data_t * in )
 	return out.release();
 }
 
+static void io_untransmogrify(io_chain_t &chains, const std::vector<int> &opened_fds) {
+    /* Close all the fds */
+    for (size_t idx = 0; idx < opened_fds.size(); idx++) {
+        close(opened_fds.at(idx));
+    }
+    
+    /* Then delete all of the redirections we made */
+    for (io_chain_t::iterator iter = result_chain.begin(); iter != result_chain.end(); iter++) {
+        delete *iter;
+    }
+
+}
+
+static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, std::vector<int> &out_opened_fds) {
+    ASSERT_IS_MAIN_THREAD();
+    assert(out_chain.empty());
+    
+    /* Just to be clear what we do for an empty chain */
+    if (in_chain.empty()) {
+        return true;
+    }
+    
+    bool success = true;
+    
+    /* Make our chain of redirections */
+    io_chain_t result_chain;
+    
+    /* In the event we can't finish transmorgrifying, we'll have to close all the files we opened. */
+    std::vector<int> opened_fds;
+                
+    for (io_chain_t::const_iterator iter = in_chain.begin(); iter != in_chain.end(); iter++) {
+    
+        io_data_t *in = *iter;
+        io_data_t *out = NULL; //gets allocated via new
+                
+        switch( in->io_mode )
+        {
+            default:
+                /* Unknown type, should never happen */
+                fprintf(stderr, "Unknown io_mode %ld\n", (long)in->io_mode);
+                abort();
+                break;
+                
+            /*
+              These redirections don't need transmogrification. They can be passed through.
+            */
+            case IO_PIPE:
+            case IO_FD:
+            case IO_BUFFER:
+            case IO_CLOSE:
+            {
+                out = new io_data_t(*in);
+                break;
+            }
+
+            /*
+              Transmogrify file redirections
+            */
+            case IO_FILE:
+            {
+                out = new io_data_t();                
+                out->fd = in->fd;
+                out->io_mode = IO_FD;
+                out->param2.close_old = 1;
+                out->next=NULL;
+
+                int fd;
+                if ((fd=open(in->filename_cstr, in->param2.flags, OPEN_MASK))==-1)
+                {
+                    debug( 1, 
+                           FILE_ERROR,
+                           in->filename_cstr );
+                                    
+                    wperror( L"open" );
+                    success = false;
+                    break;
+                }	
+
+                opened_fds.push_back(fd);
+                out->param1.old_fd = fd;
+                
+                break;
+            }
+        }
+        
+        /* Record this IO redirection even if we failed (so we can free it) */
+        result_chain.push_back(out);
+        
+        /* But don't go any further if we failed */
+        if (! success) {
+            break;
+        }
+    }
+    
+    /* Now either return success, or clean up */
+    if (success) {
+        /* Yay */
+        out_chain.swap(result_chain);
+        out_opened_fds.swap(opened_fds);
+    } else {
+        /* No dice - clean up */
+        io_untransmogrify(result_chain, opened_fds);
+    }
+    return success;
+}
+
 /**
    Morph an io redirection chain into redirections suitable for
    passing to eval, call eval, and clean up morphed redirections.
@@ -489,16 +595,18 @@ static io_data_t *io_transmogrify( io_data_t * in )
 static void internal_exec_helper( parser_t &parser,
                                   const wchar_t *def, 
 								  enum block_type_t block_type,
-								  io_data_t *io )
+								  io_chain_t &ios )
 {
-	io_data_t *io_internal = io_transmogrify( io );
+    io_chain_t morphed_chain;
+    bool transmorgrified = io_transmogrify(ios, morphed_chain);
+    
 	int is_block_old=is_block;
 	is_block=1;
 	
 	/*
 	  Did the transmogrification fail - if so, set error status and return
 	*/
-	if( io && !io_internal )
+	if( ! transmorgrified )
 	{
 		proc_set_last_status( STATUS_EXEC_FAIL );
 		return;
@@ -576,23 +684,16 @@ void exec( parser_t &parser, job_t *j )
 	
 	debug( 4, L"Exec job '%ls' with id %d", j->command_wcstr(), j->job_id );	
 	
-	if( parser.block_io )
+	if( ! parser.block_io.empty() )
 	{
-		if( j->io )
-		{
-			j->io = io_add( io_duplicate(parser.block_io), j->io );
-		}
-		else
-		{
-			j->io=io_duplicate(parser.block_io);				
-		}
+        io_duplicate_append(parser.block_io, j->io);
 	}
 
 	
-	io_data_t *input_redirect;
-
-	for( input_redirect = j->io; input_redirect; input_redirect = input_redirect->next )
+    for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
 	{
+        const io_data_t *input_redirect = *iter;
+        
 		if( (input_redirect->io_mode == IO_BUFFER) && 
 			input_redirect->is_input )
 		{
@@ -650,7 +751,7 @@ void exec( parser_t &parser, job_t *j )
 	pipe_write.next=0;
 	pipe_write.param1.pipe_fd[0]=pipe_write.param1.pipe_fd[1]=-1;
 	
-	j->io = io_add( j->io, &pipe_write );
+    j->io.push_back(&pipe_write);
 	
 	signal_block();
 
@@ -745,7 +846,7 @@ void exec( parser_t &parser, job_t *j )
 		
 		if( p == j->first_process->next )
 		{
-			j->io = io_add( j->io, &pipe_read );
+            j->io.push_back(&pipe_read);
 		}
 		
 		if( p_wants_pipe )
@@ -768,8 +869,9 @@ void exec( parser_t &parser, job_t *j )
 			  This is the last element of the pipeline.
 			  Remove the io redirection for pipe output.
 			*/
-			j->io = io_remove( j->io, &pipe_write );
-			
+            io_chain_t::iterator where = std::find(j->io.begin(), j->io.end(), &pipe_write);
+            if (where != j->io.end())
+                j->io.erase(where);
 		}
 
 		switch( p->type )
@@ -824,8 +926,8 @@ void exec( parser_t &parser, job_t *j )
 
 				if( p->next )
 				{
-					io_buffer = io_buffer_create( 0 );					
-					j->io = io_add( j->io, io_buffer );
+					io_buffer = io_buffer_create( 0 );
+                    j->io.push_back(io_buffer);
 				}
 				
 				internal_exec_helper( parser, def, TOP, j->io );
@@ -841,8 +943,8 @@ void exec( parser_t &parser, job_t *j )
 			{
 				if( p->next )
 				{
-					io_buffer = io_buffer_create( 0 );					
-					j->io = io_add( j->io, io_buffer );
+					io_buffer = io_buffer_create( 0 );
+                    j->io.push_back(io_buffer);
 				}
                 
 				internal_exec_helper( parser, p->argv0(), TOP, j->io );			
@@ -863,7 +965,7 @@ void exec( parser_t &parser, job_t *j )
 				*/
 				if( p == j->first_process )
 				{
-					io_data_t *in = io_get( j->io, 0 );
+					const io_data_t *in = io_chain_get( j->io, 0 );
 					
 					if( in )
 					{

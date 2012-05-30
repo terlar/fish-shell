@@ -110,6 +110,8 @@ public:
     }
 };
 
+typedef std::vector<io_data_t *> io_chain_t;
+
  
 /**
    Join two chains of io redirections
@@ -126,11 +128,17 @@ io_data_t *io_remove( io_data_t *list, io_data_t *element );
 */
 io_data_t *io_duplicate( io_data_t *l );
 
+/** Appends a copy of the specified 'src' chain of redirections to 'dst.' Uses operator new. */
+void io_duplicate_append( const io_chain_t &src, io_chain_t &dst );
+
+/** Destroys an io_chain */
+void io_chain_destroy(io_chain_t &chain);
+
 /**
    Return the last io redirection in the chain for the specified file descriptor.
 */
 io_data_t *io_get( io_data_t *io, int fd );
-
+const io_data_t *io_chain_get(const io_chain_t &src, int fd);
 
 
 /**

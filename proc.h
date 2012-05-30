@@ -336,12 +336,7 @@ class job_t
     ~job_t() {
         if (first_process != NULL)
             delete first_process;
-        io_data_t *data = this->io;
-        while (data) {
-            io_data_t *tmp = data->next;
-            delete data;
-            data = tmp;
-        }
+        io_chain_destroy(this->io);
         release_job_id(job_id);
     }
     
@@ -386,10 +381,8 @@ class job_t
 	*/
 	const job_id_t job_id;
 	
-	/**
-	   List of all IO redirections for this job. This linked list is allocated via new, and owned by the object, which should delete them.
-	*/
-	io_data_t *io;
+	/** List of all IO redirections for this job. */
+	io_chain_t io;
 
 	/**
 	   Bitset containing information about the job. A combination of the JOB_* constants.

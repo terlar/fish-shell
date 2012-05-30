@@ -195,6 +195,22 @@ io_data_t *io_duplicate( io_data_t *l )
 	return res;	
 }
 
+void io_duplicate_append( const io_chain_t &src, io_chain_t &dst )
+{
+    for (io_chain_t::const_iterator iter = src.begin(); iter != src.end(); iter++) {
+        const io_data_t *src_data = *iter;
+        dst.push_back(new io_data_t(*src_data));
+    }
+}
+
+void io_chain_destroy(io_chain_t &chain) 
+{
+    for (io_chain_t::iterator iter = chain.begin(); iter != chain.end(); iter++) {
+        delete *iter;
+    }
+    chain.clear();
+}
+
 io_data_t *io_get( io_data_t *io, int fd )
 {
 	if( io == NULL )
@@ -208,6 +224,17 @@ io_data_t *io_get( io_data_t *io, int fd )
 		return io;
 
 	return 0;
+}
+
+/* The old function returned the last match, so we mimic that. */
+const io_data_t *io_chain_get(const io_chain_t &src, int fd) {
+    for (io_chain_t::iterator iter = src.rbegin(); iter != src.rend(); iter++) {
+        const io_data_t *data = *iter;
+        if (data->fd == fd) {
+            return data;
+        }
+    }
+    return NULL;
 }
 
 
