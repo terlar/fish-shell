@@ -464,7 +464,6 @@ static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, s
                 out->fd = in->fd;
                 out->io_mode = IO_FD;
                 out->param2.close_old = 1;
-                out->next=NULL;
 
                 int fd;
                 if ((fd=open(in->filename_cstr, in->param2.flags, OPEN_MASK))==-1)
@@ -670,8 +669,6 @@ void exec( parser_t &parser, job_t *j )
 
 	pipe_write.io_mode=IO_PIPE;
 	pipe_write.is_input = 0;
-	pipe_read.next=0;
-	pipe_write.next=0;
 	pipe_write.param1.pipe_fd[0]=pipe_write.param1.pipe_fd[1]=-1;
 	
     j->io.push_back(&pipe_write);
@@ -1244,7 +1241,7 @@ void exec( parser_t &parser, job_t *j )
                 fflush(stderr);
                 if (g_log_forks) {
                     printf("fork #%d: Executing fork for internal builtin for '%ls'\n", g_fork_count, p->argv0());
-                    io_print(io);
+                    io_print(io_chain_t(1, io));
                 }
 				pid = execute_fork(false);
 				if( pid == 0 )

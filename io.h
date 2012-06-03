@@ -90,10 +90,7 @@ public:
 	/** Set to true if this is an input io redirection */
 	int is_input;
 	
-	/** Pointer to the next IO redirection */
-	io_data_t *next;
-    
-    io_data_t() : filename_cstr(NULL), next(NULL)
+    io_data_t() : filename_cstr(NULL)
     {
     }
     
@@ -104,10 +101,8 @@ public:
         param1(rhs.param1),
         param2(rhs.param2),
         filename_cstr(rhs.filename_cstr ? strdup(rhs.filename_cstr) : NULL),
-        is_input(rhs.is_input),
-        next(rhs.next)
+        is_input(rhs.is_input)
     {
-        
     }
     
     ~io_data_t() {
@@ -117,22 +112,16 @@ public:
 
 typedef std::vector<io_data_t *> io_chain_t;
 
- 
-/**
-   Join two chains of io redirections
-*/
-io_data_t *io_add( io_data_t *first_chain, io_data_t *decond_chain );
-
 /**
    Remove the specified io redirection from the chain
 */
-io_data_t *io_remove( io_data_t *list, io_data_t *element );
 void io_remove(io_chain_t &list, const io_data_t *element);
 
 /**
    Make a copy of the specified chain of redirections. Uses operator new.
 */
 io_data_t *io_duplicate( io_data_t *l );
+io_chain_t io_duplicate(const io_chain_t &chain);
 
 /** Appends a copy of the specified 'src' chain of redirections to 'dst.' Uses operator new. */
 void io_duplicate_append( const io_chain_t &src, io_chain_t &dst );
@@ -143,7 +132,6 @@ void io_chain_destroy(io_chain_t &chain);
 /**
    Return the last io redirection in the chain for the specified file descriptor.
 */
-io_data_t *io_get( io_data_t *io, int fd );
 const io_data_t *io_chain_get(const io_chain_t &src, int fd);
 io_data_t *io_chain_get(io_chain_t &src, int fd);
 
@@ -172,6 +160,6 @@ void io_buffer_read( io_data_t *d );
 /**
    Print debug information about the specified IO redirection chain to stderr.
 */
-void io_print( io_data_t *io );
+void io_print( const io_chain_t &chain );
 
 #endif

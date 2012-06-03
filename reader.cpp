@@ -1084,7 +1084,7 @@ static void run_pager( const wcstring &prefix, int is_quoted, const std::vector<
     wcstring msg;
 	wcstring prefix_esc;
 	char *foo;
-	io_data_t *in;
+
 	wchar_t *escaped_separator;
 	int has_case_sensitive=0;
 
@@ -1102,7 +1102,7 @@ static void run_pager( const wcstring &prefix, int is_quoted, const std::vector<
                                 is_quoted?L"-q":L"",
                                 prefix_esc.c_str() );
     
-	in= io_buffer_create( 1 );
+    io_data_t *in = io_buffer_create(1);
 	in->fd = 3;
 
 	escaped_separator = escape( COMPLETE_SEP_STR, 1);
@@ -1185,11 +1185,13 @@ static void run_pager( const wcstring &prefix, int is_quoted, const std::vector<
 	term_donate();
 	
 	io_data_t *out = io_buffer_create( 0 );
-	out->next = in;
 	out->fd = 4;
 	
     parser_t &parser = parser_t::principal_parser();
-	parser.eval( cmd, io_chain_t(1, out), TOP);
+    io_chain_t io_chain;
+    io_chain.push_back(out);
+    io_chain.push_back(in);
+	parser.eval( cmd, io_chain, TOP);
 	term_steal();
 
 	io_buffer_read( out );
