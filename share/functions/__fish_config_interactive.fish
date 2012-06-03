@@ -97,7 +97,8 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
 		# Regular syntax highlighting colors
 		set_default fish_color_normal normal
-		set_default fish_color_command green
+		set_default fish_color_command 005fd7
+		set_default fish_color_param 00afff
 		set_default fish_color_redirection normal
 		set_default fish_color_comment red
 		set_default fish_color_error red --bold
@@ -225,7 +226,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 		end
 	else
 		# Ubuntu Feisty places this command in the regular path instead
-		if which -s command-not-found
+		if which command-not-found > /dev/null 2> /dev/null
 			function fish_command_not_found_handler --on-event fish_command_not_found
 				command-not-found $argv
 			end
