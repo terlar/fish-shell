@@ -183,6 +183,15 @@ io_data_t *io_remove( io_data_t *list, io_data_t *element )
 	return list;
 }
 
+void io_remove(io_chain_t &list, const io_data_t *element)
+{
+    io_chain_t::iterator where = find(list.begin(), list.end(), element);
+    if (where != list.end())
+    {
+        list.erase(where);
+    }
+}
+
 io_data_t *io_duplicate( io_data_t *l )
 {
 	io_data_t *res;
@@ -228,8 +237,18 @@ io_data_t *io_get( io_data_t *io, int fd )
 
 /* The old function returned the last match, so we mimic that. */
 const io_data_t *io_chain_get(const io_chain_t &src, int fd) {
-    for (io_chain_t::iterator iter = src.rbegin(); iter != src.rend(); iter++) {
+    for (io_chain_t::const_reverse_iterator iter = src.rbegin(); iter != src.rend(); iter++) {
         const io_data_t *data = *iter;
+        if (data->fd == fd) {
+            return data;
+        }
+    }
+    return NULL;
+}
+
+io_data_t *io_chain_get(io_chain_t &src, int fd) {
+    for (io_chain_t::reverse_iterator iter = src.rbegin(); iter != src.rend(); iter++) {
+        io_data_t *data = *iter;
         if (data->fd == fd) {
             return data;
         }

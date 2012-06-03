@@ -73,7 +73,12 @@ public:
     /** Function to get a pointer to the buffer */
     char *out_buffer_ptr(void) {
         assert(out_buffer.get() != NULL);
-        return (out_buffer->size() == 0) ? NULL : &out_buffer->at(0);
+        return out_buffer->empty() ? NULL : &out_buffer->at(0);
+    }
+    
+    const char *out_buffer_ptr(void) const {
+        assert(out_buffer.get() != NULL);
+        return out_buffer->empty() ? NULL : &out_buffer->at(0);
     }
     
     /** Function to get the size of the buffer */
@@ -122,6 +127,7 @@ io_data_t *io_add( io_data_t *first_chain, io_data_t *decond_chain );
    Remove the specified io redirection from the chain
 */
 io_data_t *io_remove( io_data_t *list, io_data_t *element );
+void io_remove(io_chain_t &list, const io_data_t *element);
 
 /**
    Make a copy of the specified chain of redirections. Uses operator new.
@@ -139,6 +145,7 @@ void io_chain_destroy(io_chain_t &chain);
 */
 io_data_t *io_get( io_data_t *io, int fd );
 const io_data_t *io_chain_get(const io_chain_t &src, int fd);
+io_data_t *io_chain_get(io_chain_t &src, int fd);
 
 
 /**

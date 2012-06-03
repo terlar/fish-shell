@@ -71,6 +71,6 @@ void exec_close( int fd );
 int exec_pipe( int fd[2]);
 
 /* Close all fds in open_fds. This is called from postfork.cpp */
-void close_unused_internal_pipes( io_data_t *io );
+void close_unused_internal_pipes( const io_chain_t &io );
 
 #endif

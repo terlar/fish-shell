@@ -103,38 +103,38 @@ int set_child_group( job_t *j, process_t *p, int print_errors )
 }
 
 /** Make sure the fd used by this redirection is not used by i.e. a pipe.  */
-static void free_fd( io_data_t *io, int fd )
+static void free_fd(io_chain_t &io_chain, int fd)
 {
-	if( !io )
-		return;
-	
-	if( ( io->io_mode == IO_PIPE ) || ( io->io_mode == IO_BUFFER ) )
-	{
-		int i;
-		for( i=0; i<2; i++ )
-		{
-			if(io->param1.pipe_fd[i] == fd )
-			{
-				while(1)
-				{
-					if( (io->param1.pipe_fd[i] = dup(fd)) == -1)
-					{
-						 if( errno != EINTR )
-						{
-							debug_safe_int( 1, FD_ERROR, fd );							
-							wperror( L"dup" );
-							FATAL_EXIT();
-						}
-					}
-					else
-					{
-						break;
-					}
-				}
-			}
-		}
+    for (size_t idx = 0; idx < io_chain.size(); idx++) 
+    {
+        io_data_t *io = io_chain[idx];
+        if( ( io->io_mode == IO_PIPE ) || ( io->io_mode == IO_BUFFER ) )
+        {
+            int i;
+            for( i=0; i<2; i++ )
+            {
+                if(io->param1.pipe_fd[i] == fd )
+                {
+                    while(1)
+                    {
+                        if( (io->param1.pipe_fd[i] = dup(fd)) == -1)
+                        {
+                             if( errno != EINTR )
+                            {
+                                debug_safe_int( 1, FD_ERROR, fd );							
+                                wperror( L"dup" );
+                                FATAL_EXIT();
+                            }
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 	}
-	free_fd( io->next, fd );
 }
 
 
@@ -150,13 +150,14 @@ static void free_fd( io_data_t *io, int fd )
 
    \return 0 on sucess, -1 on failiure
 */
-static int handle_child_io( io_data_t *io )
+static int handle_child_io( io_chain_t &io_chain )
 {
 
-	close_unused_internal_pipes( io );
-
-	for( ; io; io=io->next )
+	close_unused_internal_pipes( io_chain );
+    size_t idx;
+	for (idx = 0; idx < io_chain.size(); idx++)
 	{
+        io_data_t *io = io_chain[idx];
 		int tmp;
 
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
@@ -167,7 +168,7 @@ static int handle_child_io( io_data_t *io )
 		if( io->fd > 2 )
 		{
 			/* Make sure the fd used by this redirection is not used by e.g. a pipe.  */
-			free_fd( io, io->fd );
+			free_fd(io_chain, io->fd );
 		}
 				
 		switch( io->io_mode )

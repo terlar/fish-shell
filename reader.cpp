@@ -1189,7 +1189,7 @@ static void run_pager( const wcstring &prefix, int is_quoted, const std::vector<
 	out->fd = 4;
 	
     parser_t &parser = parser_t::principal_parser();
-	parser.eval( cmd, out, TOP);
+	parser.eval( cmd, io_chain_t(1, out), TOP);
 	term_steal();
 
 	io_buffer_read( out );
@@ -2219,7 +2219,7 @@ void reader_run_command( parser_t &parser, const wchar_t *cmd )
 
 	gettimeofday(&time_before, NULL);
 
-	parser.eval( cmd, 0, TOP );
+	parser.eval( cmd, io_chain_t(), TOP );
 	job_reap( 1 );
 
 	gettimeofday(&time_after, NULL);
@@ -3339,7 +3339,7 @@ int reader_search_mode()
    the prompt, using syntax highlighting. This is used for reading
    scripts and init files.
 */
-static int read_ni( int fd, io_data_t *io )
+static int read_ni( int fd, const io_chain_t &io )
 {
     parser_t &parser = parser_t::principal_parser();
 	FILE *in_stream;
@@ -3438,7 +3438,7 @@ static int read_ni( int fd, io_data_t *io )
 	return res;
 }
 
-int reader_read( int fd, io_data_t *io )
+int reader_read( int fd, const io_chain_t &io )
 {
 	int res;
 

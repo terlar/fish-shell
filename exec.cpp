@@ -147,24 +147,25 @@ int exec_pipe( int fd[2])
 /**
    Check if the specified fd is used as a part of a pipeline in the
    specidied set of IO redirections.
+   This is called after fork().
 
    \param fd the fd to search for
-   \param io the set of io redirections to search in
+   \param io_chain the set of io redirections to search in
 */
-static int use_fd_in_pipe( int fd, io_data_t *io )
-{	
-	if( !io )
-		return 0;
-	
-	if( ( io->io_mode == IO_BUFFER ) || 
-		( io->io_mode == IO_PIPE ) )
-	{
-		if( io->param1.pipe_fd[0] == fd ||
-			io->param1.pipe_fd[1] == fd )
-			return 1;
-	}
-		
-	return use_fd_in_pipe( fd, io->next );
+static bool use_fd_in_pipe(int fd, const io_chain_t &io_chain )
+{
+    for (size_t idx = 0; idx < io_chain.size(); idx++)
+    {
+        const io_data_t *io = io_chain[idx];
+        if( ( io->io_mode == IO_BUFFER ) || 
+            ( io->io_mode == IO_PIPE ) )
+        {
+            if( io->param1.pipe_fd[0] == fd ||
+                io->param1.pipe_fd[1] == fd )
+                return true;
+        }
+    }
+    return false;
 }
 
 
@@ -176,13 +177,13 @@ static int use_fd_in_pipe( int fd, io_data_t *io )
    \param io the list of io redirections for this job. Pipes mentioned
    here should not be closed.
 */
-void close_unused_internal_pipes( io_data_t *io )
+void close_unused_internal_pipes( const io_chain_t &io )
 {
     /* A call to exec_close will modify open_fds, so be careful how we walk */
     for (size_t i=0; i < open_fds.size(); i++) {
         if (open_fds[i]) {
             int fd = (int)i;
-            if( !use_fd_in_pipe( fd, io) )
+            if( !use_fd_in_pipe(fd, io))
             {
                 debug( 4, L"Close fd %d, used in other context", fd );
                 exec_close( fd );
@@ -379,32 +380,29 @@ static void launch_process_nofork( process_t *p )
    Check if the IO redirection chains contains redirections for the
    specified file descriptor
 */
-static int has_fd( io_data_t *d, int fd )
+static int has_fd( const io_chain_t &d, int fd )
 {
-	return io_get( d, fd ) != 0;
+	return io_chain_get( d, fd ) != NULL;
 }
-
 
 /**
    Free a transmogrified io chain. Only the chain itself and resources
    used by a transmogrified IO_FILE redirection are freed, since the
    original chain may still be needed.
 */
-static void io_untransmogrify( io_data_t * in, io_data_t *out )
-{
-	if( !out )
-		return;
-    assert(in != NULL);
-	io_untransmogrify( in->next, out->next );
-	switch( in->io_mode )
-	{
-		case IO_FILE:
-			exec_close( out->param1.old_fd );
-			break;
-	}	
-	delete out;
-}
+static void io_cleanup_chains(io_chain_t &chains, const std::vector<int> &opened_fds) {
+    /* Close all the fds */
+    for (size_t idx = 0; idx < opened_fds.size(); idx++) {
+        close(opened_fds.at(idx));
+    }
+    
+    /* Then delete all of the redirections we made */
+    for (io_chain_t::iterator iter = chains.begin(); iter != chains.end(); iter++) {
+        delete *iter;
+    }
+    chains.clear();
 
+}
 
 /**
    Make a copy of the specified io redirection chain, but change file
@@ -415,81 +413,6 @@ static void io_untransmogrify( io_data_t * in, io_data_t *out )
 
    \return the transmogrified chain on sucess, or 0 on failiure
 */
-static io_data_t *io_transmogrify( io_data_t * in )
-{
-    ASSERT_IS_MAIN_THREAD();
-	if( !in )
-		return 0;
-	
-	std::auto_ptr<io_data_t> out(new io_data_t);
-	
-	out->fd = in->fd;
-	out->io_mode = IO_FD;
-	out->param2.close_old = 1;
-	out->next=0;
-		
-	switch( in->io_mode )
-	{
-		/*
-		  These redirections don't need transmogrification. They can be passed through.
-		*/
-		case IO_FD:
-		case IO_CLOSE:
-		case IO_BUFFER:
-		case IO_PIPE:
-		{
-            out.reset(new io_data_t(*in));
-			break;
-		}
-
-		/*
-		  Transmogrify file redirections
-		*/
-		case IO_FILE:
-		{
-			int fd;
-			
-			if( (fd=open( in->filename_cstr, in->param2.flags, OPEN_MASK ) )==-1 )
-			{
-				debug( 1, 
-					   FILE_ERROR,
-					   in->filename_cstr );
-								
-				wperror( L"open" );
-				return NULL;
-			}	
-
-			out->param1.old_fd = fd;
-			break;
-		}
-	}
-	
-	if( in->next)
-	{
-		out->next = io_transmogrify( in->next );
-		if( !out->next )
-		{
-			io_untransmogrify( in, out.release() );
-			return NULL;
-		}
-	}
-	
-	return out.release();
-}
-
-static void io_untransmogrify(io_chain_t &chains, const std::vector<int> &opened_fds) {
-    /* Close all the fds */
-    for (size_t idx = 0; idx < opened_fds.size(); idx++) {
-        close(opened_fds.at(idx));
-    }
-    
-    /* Then delete all of the redirections we made */
-    for (io_chain_t::iterator iter = result_chain.begin(); iter != result_chain.end(); iter++) {
-        delete *iter;
-    }
-
-}
-
 static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, std::vector<int> &out_opened_fds) {
     ASSERT_IS_MAIN_THREAD();
     assert(out_chain.empty());
@@ -578,7 +501,7 @@ static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, s
         out_opened_fds.swap(opened_fds);
     } else {
         /* No dice - clean up */
-        io_untransmogrify(result_chain, opened_fds);
+        io_cleanup_chains(result_chain, opened_fds);
     }
     return success;
 }
@@ -598,7 +521,8 @@ static void internal_exec_helper( parser_t &parser,
 								  io_chain_t &ios )
 {
     io_chain_t morphed_chain;
-    bool transmorgrified = io_transmogrify(ios, morphed_chain);
+    std::vector<int> opened_fds;
+    bool transmorgrified = io_transmogrify(ios, morphed_chain, opened_fds);
     
 	int is_block_old=is_block;
 	is_block=1;
@@ -614,11 +538,11 @@ static void internal_exec_helper( parser_t &parser,
 	
 	signal_unblock();
 	
-	parser.eval( def, io_internal, block_type );		
+	parser.eval( def, morphed_chain, block_type );		
 	
 	signal_block();
 	
-	io_untransmogrify( io, io_internal );
+	io_cleanup_chains(morphed_chain, opened_fds);
 	job_reap( 0 );
 	is_block=is_block_old;
 }
@@ -659,7 +583,6 @@ void exec( parser_t &parser, job_t *j )
 	sigset_t chldset; 
 	
 	io_data_t pipe_read, pipe_write;
-	io_data_t *tmp;
 
 	io_data_t *io_buffer =0;
 
@@ -689,10 +612,10 @@ void exec( parser_t &parser, job_t *j )
         io_duplicate_append(parser.block_io, j->io);
 	}
 
-	
+	const io_data_t *input_redirect = NULL;
     for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
 	{
-        const io_data_t *input_redirect = *iter;
+        input_redirect = *iter;
         
 		if( (input_redirect->io_mode == IO_BUFFER) && 
 			input_redirect->is_input )
@@ -1141,7 +1064,7 @@ void exec( parser_t &parser, job_t *j )
 					break;
 				}
 
-				j->io = io_remove( j->io, io_buffer );
+				io_remove( j->io, io_buffer );
 				
 				io_buffer_read( io_buffer );
 				
@@ -1260,7 +1183,7 @@ void exec( parser_t &parser, job_t *j )
 				  performance quite a bit in complex completion code.
 				*/
 
-				io_data_t *io = io_get( j->io, 1 );
+				io_data_t *io = io_chain_get( j->io, 1 );
 				bool buffer_stdout = io && io->io_mode == IO_BUFFER;
 				
 				if( ( get_stderr_buffer().empty() ) && 
@@ -1273,10 +1196,10 @@ void exec( parser_t &parser, job_t *j )
 					skip_fork = 1;
 				}
                 
-                if (! skip_fork && ! j->io) {
+                if (! skip_fork && j->io.empty()) {
                     /* PCA for some reason, fish forks a lot, even for basic builtins like echo just to write out their buffers. I'm certain a lot of this is unnecessary, but I am not sure exactly when. If j->io is NULL, then it means there's no pipes or anything, so we can certainly just write out our data. Beyond that, we may be able to do the same if io_get returns 0 for STDOUT_FILENO and STDERR_FILENO. */
                     if (g_log_forks) {
-                        printf("fork #-: Skipping fork for internal builtin for '%ls' (io is %p, job_io is %p)\n", p->argv0(), io, j->io);
+                        printf("fork #-: Skipping fork for internal builtin for '%ls'\n", p->argv0());
                     }
                     const wcstring &out = get_stdout_buffer(), &err = get_stderr_buffer();
                     char *outbuff = wcs2str(out.c_str()), *errbuff = wcs2str(err.c_str());
@@ -1286,8 +1209,9 @@ void exec( parser_t &parser, job_t *j )
                     skip_fork = 1;
                 }
 
-				for( io_data_t *tmp_io = j->io; tmp_io != NULL; tmp_io=tmp_io->next )
+                for( io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++ )
 				{
+                    io_data_t *tmp_io = *iter;
 					if( tmp_io->io_mode == IO_FILE && strcmp(tmp_io->filename_cstr, "/dev/null") != 0)
 					{
 						skip_fork = 0;
@@ -1319,7 +1243,7 @@ void exec( parser_t &parser, job_t *j )
                 fflush(stdout);
                 fflush(stderr);
                 if (g_log_forks) {
-                    printf("fork #%d: Executing fork for internal builtin for '%ls' (io is %p, job_io is %p)\n", g_fork_count, p->argv0(), io, j->io);
+                    printf("fork #%d: Executing fork for internal builtin for '%ls'\n", g_fork_count, p->argv0());
                     io_print(io);
                 }
 				pid = execute_fork(false);
@@ -1449,10 +1373,12 @@ void exec( parser_t &parser, job_t *j )
 
 	debug( 3, L"Job is constructed" );
 
-	j->io = io_remove( j->io, &pipe_read );
-
-	for( tmp = parser.block_io; tmp; tmp=tmp->next )
-		j->io = io_remove( j->io, tmp );
+	io_remove( j->io, &pipe_read );
+    
+    for (io_chain_t::const_iterator iter = parser.block_io.begin(); iter != parser.block_io.end(); iter++)
+    {
+        io_remove( j->io, *iter );
+    }
 	
 	job_set_flag( j, JOB_CONSTRUCTED, 1 );
 
@@ -1501,7 +1427,7 @@ static int exec_subshell_internal( const wcstring &cmd, wcstring_list_t *lst )
 	prev_status = proc_get_last_status();
 	
     parser_t &parser = parser_t::principal_parser();
-	if( parser.eval( cmd, io_buffer, SUBST ) )
+	if( parser.eval( cmd, io_chain_t(1, io_buffer), SUBST ) )
 	{
 		status = -1;
 	}

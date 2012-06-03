@@ -72,9 +72,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static int read_init()
 {
     parser_t &parser = parser_t::principal_parser();
-
-	parser.eval( L"builtin . " DATADIR "/fish/config.fish 2>/dev/null", 0, TOP );
-	parser.eval( L"builtin . " SYSCONFDIR L"/fish/config.fish 2>/dev/null", 0, TOP );
+    const io_chain_t empty_ios;
+	parser.eval( L"builtin . " DATADIR "/fish/config.fish 2>/dev/null", empty_ios, TOP );
+	parser.eval( L"builtin . " SYSCONFDIR L"/fish/config.fish 2>/dev/null", empty_ios, TOP );
 	
 	/*
 	  We need to get the configuration directory before we can source the user configuration file
@@ -89,7 +89,7 @@ static int read_init()
 	{
 		wcstring config_dir_escaped = escape_string( config_dir, 1 );
         wcstring eval_buff = format_string(L"builtin . %ls/config.fish 2>/dev/null", config_dir_escaped.c_str());
-		parser.eval( eval_buff, 0, TOP );
+		parser.eval( eval_buff, empty_ios, TOP );
 	}
 	
 	return 1;
@@ -308,12 +308,13 @@ int main( int argc, char **argv )
     if (g_log_forks)
         printf("%d: g_fork_count: %d\n", __LINE__, g_fork_count);
 
+    const io_chain_t empty_ios;
 	if( read_init() )
 	{
 		if( cmd != 0 )
 		{
 			wchar_t *cmd_wcs = str2wcs( cmd );
-			res = parser.eval( cmd_wcs, 0, TOP );
+			res = parser.eval( cmd_wcs, empty_ios, TOP );
 			free(cmd_wcs);
 			reader_exit(0, 0);
 		}
@@ -321,7 +322,7 @@ int main( int argc, char **argv )
 		{
 			if( my_optind == argc )
 			{
-				res = reader_read( STDIN_FILENO, 0 );
+				res = reader_read( STDIN_FILENO, empty_ios );
 			}
 			else
 			{
@@ -366,7 +367,7 @@ int main( int argc, char **argv )
 				free( rel_filename );
 				free( abs_filename );
 
-				res = reader_read( fd, 0 );
+				res = reader_read( fd, empty_ios );
 
 				if( res )
 				{

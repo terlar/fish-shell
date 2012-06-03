@@ -353,7 +353,7 @@ class parser_t {
 
       \return 0 on success, 1 otherwise
     */
-    int eval( const wcstring &cmd, io_data_t *io, enum block_type_t block_type );
+    int eval( const wcstring &cmdStr, const io_chain_t &io, enum block_type_t block_type );
     
     /**
       Evaluate line as a list of parameters, i.e. tokenize it and perform parameter expansion and cmdsubst execution on the tokens.

@@ -238,7 +238,7 @@ static void start_fishd()
 	
     wcstring cmd = format_string(FISHD_CMD, pw->pw_name);	
     parser_t &parser = parser_t::principal_parser();
-	parser.eval( cmd, 0, TOP );
+	parser.eval( cmd, io_chain_t(), TOP );
 }
 
 /**
