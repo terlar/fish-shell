@@ -100,7 +100,8 @@ void io_buffer_read( io_data_t *d )
 
 io_data_t *io_buffer_create( int is_input )
 {
-	std::auto_ptr<io_data_t> buffer_redirect(new io_data_t);
+    bool success = true;
+	io_data_t *buffer_redirect = new io_data_t;
 	buffer_redirect->out_buffer_create();
 	buffer_redirect->io_mode=IO_BUFFER;
 	buffer_redirect->is_input = is_input;
@@ -110,7 +111,7 @@ io_data_t *io_buffer_create( int is_input )
 	{
 		debug( 1, PIPE_ERROR );
 		wperror (L"pipe");
-		return NULL;
+		success = false;
 	}
 	else if( fcntl( buffer_redirect->param1.pipe_fd[0],
 					F_SETFL,
@@ -118,9 +119,16 @@ io_data_t *io_buffer_create( int is_input )
 	{
 		debug( 1, PIPE_ERROR );
 		wperror( L"fcntl" );
-		return NULL;
+		success = false;
 	}
-	return buffer_redirect.release();
+    
+    if (! success)
+    {
+        delete buffer_redirect;
+        buffer_redirect = NULL;
+    }
+    
+	return buffer_redirect;
 }
 
 void io_buffer_destroy( io_data_t *io_buffer )
