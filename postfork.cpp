@@ -154,8 +154,7 @@ static int handle_child_io( io_chain_t &io_chain )
 {
 
 	close_unused_internal_pipes( io_chain );
-    size_t idx;
-	for (idx = 0; idx < io_chain.size(); idx++)
+	for (size_t idx = 0; idx < io_chain.size(); idx++)
 	{
         io_data_t *io = io_chain[idx];
 		int tmp;
@@ -305,8 +304,7 @@ int setup_child_process( job_t *j, process_t *p )
 	/* Remove all signal blocks */
 	signal_unblock();	
 	
-	return ok ? 0 : -1;
-	
+	return ok ? 0 : -1;	
 }
 
 int g_fork_count = 0;
@@ -362,4 +360,185 @@ pid_t execute_fork(bool wait_for_threads_to_die)
 	wperror (L"fork");
 	FATAL_EXIT();
     return 0;
+}
+
+fork_actions_t::fork_actions_t() :
+    should_set_parent_group_id(false),
+    desired_parent_group_id(0),
+    reset_signal_handlers(false),
+    reset_sigmask(false)
+{
+}
+
+void fork_actions_t::setup_for_child_process(job_t *j, process_t *p)
+{
+	if( p )
+	{
+        if (job_get_flag(j, JOB_CONTROL))
+        {
+            this->should_set_parent_group_id = true;
+            
+            // PCA: I'm quite fuzzy on process groups,
+            // but I believe that the default value of 0
+            // means that the process becomes its own
+            // group leader, which is what set_child_group did
+            // in this case. So we want this to be 0 if j->pgid is 0.
+            this->desired_parent_group_id = j->pgid;
+        }
+        
+        // We need to support this stuff somehow
+        #if 0
+        if( job_get_flag( j, JOB_TERMINAL ) && job_get_flag( j, JOB_FOREGROUND ) )
+        {
+            tcsetpgrp (0, j->pgid);
+        }
+        #endif
+	}
+    
+    /* We're going to close all pipes we don't use ourselves */
+    get_unused_internal_pipes(this->files_to_close, j->io);
+    
+	for (io_chain_t::const_iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    {
+        const io_data_t *io = *iter;
+		if( io->fd > 2 )
+		{
+			/* Make sure the fd used by this redirection is not used by e.g. a pipe. */
+            // free_fd(io_chain, io->fd );
+            #warning This is not right
+			this->files_to_close.push_back(io->fd);
+		}
+        switch (io->io_mode)
+        {
+            case IO_CLOSE:
+            {
+                this->files_to_close.push_back(io->fd);
+                break;
+            }
+            
+            case IO_FILE:
+            {
+                struct fork_action_open_file_t act = {
+                    io->filename_cstr, //path
+                    io->param2.flags, //mode
+                    io->fd //fd
+                };
+                files_to_open.push_back(act);
+                break;
+            }
+            
+            case IO_FD:
+            {
+                struct fork_action_remap_fd_t act = {
+                    io->param1.old_fd, //from
+                    io->fd //to
+                };
+                files_to_remap.push_back(act);
+                break;
+            }
+            
+			case IO_BUFFER:
+			case IO_PIPE:
+			{
+                unsigned int write_pipe_idx = (io->is_input ? 0 : 1);
+                struct fork_action_remap_fd_t act = {
+                    io->param1.pipe_fd[write_pipe_idx], //from
+                    io->fd //to
+                };
+                files_to_remap.push_back(act);
+                
+                #warning This closing looks very wrong
+				if( write_pipe_idx > 0 ) 
+				{
+                    files_to_close.push_back(io->param1.pipe_fd[0]);
+                    files_to_close.push_back(io->param1.pipe_fd[1]);
+				}
+				else
+				{
+					files_to_close.push_back(io->param1.pipe_fd[0]);
+				}
+                break;
+            }
+        }
+    }
+    
+	/* Set the handling for job control signals back to the default.  */
+	this->reset_signal_handlers = true;
+	
+	/* Remove all signal blocks */
+	this->reset_sigmask = true;
+}
+
+bool fork_actions_t::make_spawnattr(posix_spawnattr_t *result) const
+{
+    /* Initialize the output */
+    if (posix_spawnattr_init(result) != 0)
+        return false;
+    
+    /* Set our flags */
+    short flags = 0;
+    if (reset_signal_handlers)
+        flags |= POSIX_SPAWN_SETSIGDEF;
+    if (reset_sigmask)
+        flags |= POSIX_SPAWN_SETSIGMASK;
+    if (should_set_parent_group_id)
+        flags |= POSIX_SPAWN_SETPGROUP;
+    
+    int err = 0;
+    if (! err)
+        err = posix_spawnattr_setflags(result, flags);
+    
+    /* Everybody gets default handlers */
+    sigset_t sigdefault;
+    sigfillset(&sigdefault);
+    if (! err && reset_signal_handlers)
+        err = posix_spawnattr_setsigdefault(result, &sigdefault);
+    
+    /* No signals blocked */
+    sigset_t sigmask;
+    sigemptyset(&sigmask);
+    if (! err && reset_sigmask)
+        err = posix_spawnattr_setsigmask(result, &sigmask);
+    
+    
+    /* Clean up on error */
+    if (err)
+        posix_spawnattr_destroy(result);
+    
+    return err == 0;
+}
+
+bool fork_actions_t::make_file_actions(posix_spawn_file_actions_t *result) const
+{
+    /* Initialize the output */
+    if (posix_spawn_file_actions_init(result) != 0)
+        return false;
+    
+    /* Handle files to close */
+    size_t i;
+    int err = 0;
+    for (i = 0; ! err && i < files_to_close.size(); i++)
+    {
+        err = posix_spawn_file_actions_addclose(result, files_to_close[i]);
+    }
+    
+    /* Handle files_to_open */
+    for (i = 0; ! err && i < files_to_open.size(); i++)
+    {
+        const fork_action_open_file_t &f = files_to_open[i];
+        err = posix_spawn_file_actions_addopen(result, f.fd, f.path.c_str(), f.mode, OPEN_MASK);
+    }
+    
+    /* Handle files_to_remap */
+    for (i = 0; ! err && i < files_to_remap.size(); i++)
+    {
+        const fork_action_remap_fd_t &f = files_to_remap[i];
+        err = posix_spawn_file_actions_adddup2(result, f.from, f.to);
+    }
+    
+    /* Clean up on error */
+    if (err)
+        posix_spawn_file_actions_destroy(result);
+    
+    return err == 0;
 }

@@ -192,6 +192,19 @@ void close_unused_internal_pipes( const io_chain_t &io )
     }
 }
 
+void get_unused_internal_pipes(std::vector<int> &fds, const io_chain_t &io)
+{
+    for (size_t i=0; i < open_fds.size(); i++) {
+        if (open_fds[i]) {
+            int fd = (int)i;
+            if( !use_fd_in_pipe(fd, io))
+            {
+                fds.push_back(fd);
+            }
+        }
+    }
+}
+
 /**
    Returns the interpreter for the specified script. Returns NULL if file
    is not a script with a shebang.
@@ -1296,32 +1309,45 @@ void exec( parser_t &parser, job_t *j )
                     const wchar_t *func = parser_t::principal_parser().is_function();
                     printf("fork #%d: forking for '%s' in '%ls:%ls'\n", g_fork_count, actual_cmd, file ? file : L"", func ? func : L"?");
                 }
-				pid = execute_fork(false);
-				if( pid == 0 )
-				{
-					/*
-					  This is the child process. 
-					*/
-					p->pid = getpid();
-					setup_child_process( j, p );
-					safe_launch_process( p, actual_cmd, argv, envv );
-					
-					/*
-					  safe_launch_process _never_ returns...
-					*/
-				}
-				else
-				{
-					/* 
-					   This is the parent process. Store away
-					   information on the child, and possibly fice
-					   it control over the terminal.
-					*/
-					p->pid = pid;
+                
+                /* Prefer to use posix_spawn, since it's faster on some systems */
+                bool use_posix_spawn = true;
+                if (use_posix_spawn)
+                {
+                    //set_child_group
+                    //handle_child_io
+                    //signal_reset_handlers
+                    //signal_unblock
+                    
+                }
+                else
+                {
+                    pid = execute_fork(false);
+                    if (pid == 0)
+                    {
+                        /*
+                          This is the child process. 
+                        */
+                        p->pid = getpid();
+                        setup_child_process( j, p );
+                        safe_launch_process( p, actual_cmd, argv, envv );
+                        
+                        /*
+                          safe_launch_process _never_ returns...
+                        */
+                    }
+                }
 
-					set_child_group( j, p, 0 );
-															
-				}
+
+                /* 
+                   This is the parent process. Store away
+                   information on the child, and possibly fice
+                   it control over the terminal.
+                */
+                p->pid = pid;
+
+                set_child_group( j, p, 0 );
+
 				break;
 			}
 			

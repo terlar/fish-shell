@@ -1544,7 +1544,7 @@ void parser_t::parse_job_argument_list( process_t *p,
 								   tok_get_desc( tok_last_type(tok)) );
 					}
 
-					if( ! has_target || target.size() == 0 )
+					if( ! has_target || target.empty() )
 					{
 						if( error_code == 0 )
 							error( SYNTAX_ERROR,

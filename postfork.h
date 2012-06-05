@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <list>
+#include <spawn.h>
 
 #include "config.h"
 #include "common.h"
@@ -54,5 +55,54 @@ int setup_child_process( job_t *j, process_t *p );
 /* Call fork(), optionally waiting until we are no longer multithreaded. If the forked child doesn't do anything that could allocate memory, take a lock, etc. (like call exec), then it's not necessary to wait for threads to die. If the forked child may do those things, it should wait for threads to die.
 */
 pid_t execute_fork(bool wait_for_threads_to_die);
+
+/** This class represents a list of things to do to a child process.
+    This can either be 'executed' when using fork, or can be turned into a posix_spawnattr to pass to posix_spawn.
+*/
+class fork_actions_t {
+    private:
+        
+    /** Whether we should set the parent group ID (and what to set it to) */
+    bool should_set_parent_group_id;
+    int desired_parent_group_id;
+    
+    /** Files to close */
+    std::vector<int> files_to_close;
+    
+    /** A list of files to open, and the corresponding fd */
+    struct fork_action_open_file_t {
+        std::string path;
+        int mode;
+        int fd;
+    };
+    std::vector<fork_action_open_file_t> files_to_open;
+    
+    /** A list of file descriptors to re-map */
+    struct fork_action_remap_fd_t {
+        int from;
+        int to;
+    };
+    std::vector<fork_action_remap_fd_t> files_to_remap;
+    
+    /* Whether to reset signal handlers */
+    bool reset_signal_handlers;
+    
+    /* Whether to reset the sigmask */
+    bool reset_sigmask;
+    
+    
+    public:
+    /* Constructor defaults everything to false. */
+    fork_actions_t();
+    
+    /** Setup for a child process */
+    void setup_for_child_process(job_t *j, process_t *p);
+    
+    /* Initializes and fills in a posix_spawnattr_t; on success, the caller should destroy it via posix_spawnattr_destroy */
+    bool make_spawnattr(posix_spawnattr_t *result) const;
+    
+    /* Initializes and fills in a posix_spawn_file_actions_t; on success, the caller should destroy it via posix_spawnattr_destroy */
+    bool make_file_actions(posix_spawn_file_actions_t *result) const;
+};
 
 #endif
