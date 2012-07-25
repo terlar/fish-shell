@@ -321,7 +321,7 @@ static void safe_launch_process( process_t *p, const char *actual_cmd, char **ar
             const char *err = strerror(errno);
             debug_safe(0, "exec: %s", err);
 			
-			debug_safe(0, "The file '%ls' is marked as an executable but could not be run by the operating system.", actual_cmd);
+			debug_safe(0, "The file '%s' is marked as an executable but could not be run by the operating system.", actual_cmd);
 			exit_without_destructors(STATUS_EXEC_FAIL);
 		}
 
