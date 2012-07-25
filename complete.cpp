@@ -251,6 +251,49 @@ const wcstring &completion_entry_t::get_short_opt_str() const {
     return short_opt_str;    
 }
 
+/* completion_t functions */
+completion_t::completion_t(const wcstring &comp, const wcstring &desc, int flags_val) : completion(comp), description(desc), flags(flags_val)
+{
+    if( flags & COMPLETE_AUTO_SPACE )
+    {
+        flags = flags & ~COMPLETE_AUTO_SPACE;
+        size_t len = completion.size();
+        if (len > 0  && ( wcschr( L"/=@:", comp.at(len-1)) != 0 ))
+            flags |= COMPLETE_NO_SPACE;
+    }
+
+}
+
+completion_t::completion_t(const completion_t &him) : completion(him.completion), description(him.description), flags(him.flags)
+{
+}
+
+completion_t &completion_t::operator=(const completion_t &him)
+{
+    if (this != &him)
+    {
+        this->completion = him.completion;
+        this->description = him.description;
+        this->flags = him.flags;
+    }
+    return *this;
+}
+
+wcstring_list_t completions_to_wcstring_list( const std::vector<completion_t> &list )
+{
+    wcstring_list_t strings;
+    strings.reserve(list.size());
+    for (std::vector<completion_t>::const_iterator iter = list.begin(); iter != list.end(); ++iter) {
+        strings.push_back(iter->completion);
+    }
+    return strings;
+}
+
+void sort_completions( std::vector<completion_t> &completions)
+{
+    std::sort(completions.begin(), completions.end());
+}
+
 /** Class representing an attempt to compute completions */
 class completer_t {
     const complete_type_t type;
@@ -300,11 +343,17 @@ class completer_t {
     
     bool condition_test( const wcstring &condition );
     
+    void complete_strings( const wcstring &wc_escaped,
+                           const wchar_t *desc,
+                           wcstring (*desc_func)(const wcstring &),
+                           std::vector<completion_t> &possible_comp,
+                           complete_flags_t flags );
+    
     expand_flags_t expand_flags() const {
-        /* Never do command substitution in autosuggestions */
+        /* Never do command substitution in autosuggestions. Sadly, we also can't yet do process expansion because it's not thread safe. */
         expand_flags_t result = 0;
         if (type == COMPLETE_AUTOSUGGEST)
-            result |= EXPAND_SKIP_CMDSUBST;
+            result |= EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_PROCESS;
         return result;
     }
     
@@ -341,7 +390,7 @@ void completion_autoload_t::command_removed(const wcstring &cmd) {
    Create a new completion entry
 
 */
-void completion_allocate(std::vector<completion_t> &completions, const wcstring &comp, const wcstring &desc, complete_flags_t flags)
+void append_completion(std::vector<completion_t> &completions, const wcstring &comp, const wcstring &desc, complete_flags_t flags)
 {
     completions.push_back(completion_t(comp, desc, flags));
 }
@@ -560,7 +609,7 @@ static wcstring format_error(const wchar_t *prefix, const wcstring &str) {
    Find the full path and commandname from a command string 'str'.
 */
 static void parse_cmd_string(const wcstring &str, wcstring &path, wcstring &cmd) {
-    if (! path_get_path_string(str, path)) {
+    if (! path_get_path(str, &path)) {
 		/** Use the empty string as the 'path' for commands that can not be found. */
         path = L"";
     }
@@ -812,8 +861,8 @@ int complete_is_valid_argument( const wchar_t *str,
 
 /**
    Copy any strings in possible_comp which have the specified prefix
-   to the list comp_out. The prefix may contain wildcards. The output
-   will consist of completion_t structs.
+   to the completer's completion array. The prefix may contain wildcards.
+   The output will consist of completion_t structs.
 
    There are three ways to specify descriptions for each
    completion. Firstly, if a description has already been added to the
@@ -822,22 +871,20 @@ int complete_is_valid_argument( const wchar_t *str,
    completion. Thirdly, if none of the above are available, the desc
    string is used as a description.
 
-   \param comp_out the destination list
    \param wc_escaped the prefix, possibly containing wildcards. The wildcard should not have been unescaped, i.e. '*' should be used for any string, not the ANY_STRING character.
    \param desc the default description, used for completions with no embedded description. The description _may_ contain a COMPLETE_SEP character, if not, one will be prefixed to it
    \param desc_func the function that generates a description for those completions witout an embedded description
    \param possible_comp the list of possible completions to iterate over
 */
 
-static void complete_strings( std::vector<completion_t> &comp_out,
-							  const wcstring &wc_escaped,
-							  const wchar_t *desc,
-							  wcstring (*desc_func)(const wcstring &),
-							  std::vector<completion_t> &possible_comp,
-							  complete_flags_t flags )
+void completer_t::complete_strings( const wcstring &wc_escaped,
+                                    const wchar_t *desc,
+                                    wcstring (*desc_func)(const wcstring &),
+                                    std::vector<completion_t> &possible_comp,
+                                    complete_flags_t flags )
 {
     wcstring tmp = wc_escaped;
-    if (! expand_one(tmp, EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_WILDCARDS))
+    if (! expand_one(tmp, EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_WILDCARDS | this->expand_flags()))
         return;
     
 	const wchar_t *wc = parse_util_unescape_wildcards( tmp.c_str() );
@@ -849,7 +896,7 @@ static void complete_strings( std::vector<completion_t> &comp_out,
 
 		if( next_str )
 		{
-			wildcard_complete( next_str, wc, desc, desc_func, comp_out, flags );
+			wildcard_complete( next_str, wc, desc, desc_func, this->completions, flags );
 		}
 	}
 
@@ -1009,11 +1056,7 @@ void completer_t::complete_cmd( const wcstring &str_cmd, bool use_function, bool
     if (str_cmd.empty())
         return;
         
-	wchar_t *path_cpy;
-	wchar_t *nxt_path;
-	wchar_t *state;
 	std::vector<completion_t> possible_comp;
-
 
     env_var_t cdpath = env_get_string(L"CDPATH");
     if (cdpath.missing_or_empty())
@@ -1043,14 +1086,10 @@ void completer_t::complete_cmd( const wcstring &str_cmd, bool use_function, bool
 			const env_var_t path = env_get_string(L"PATH");
 			if( !path.missing() )
 			{
-			
-				path_cpy = wcsdup( path.c_str() );
-			
-				for( nxt_path = wcstok( path_cpy, ARRAY_SEP_STR, &state );
-				     nxt_path != 0;
-				     nxt_path = wcstok( 0, ARRAY_SEP_STR, &state) )
+                wcstring base_path;
+                wcstokenizer tokenizer(path, ARRAY_SEP_STR);
+				while (tokenizer.next(base_path))
 				{
-                    wcstring base_path = nxt_path;
                     if (base_path.empty())
                         continue;
                         
@@ -1078,7 +1117,6 @@ void completer_t::complete_cmd( const wcstring &str_cmd, bool use_function, bool
 						}
 					}
 				}
-				free( path_cpy );
 				if (wants_description)
                     this->complete_cmd_desc( str_cmd );
 			}
@@ -1096,7 +1134,7 @@ void completer_t::complete_cmd( const wcstring &str_cmd, bool use_function, bool
                 possible_comp.push_back(completion_t(names.at(i)));
             }
             
-			complete_strings( this->completions, str_cmd, 0, &complete_function_desc, possible_comp, 0 );
+			this->complete_strings( str_cmd, 0, &complete_function_desc, possible_comp, 0 );
 		}
 
 		possible_comp.clear();
@@ -1104,7 +1142,7 @@ void completer_t::complete_cmd( const wcstring &str_cmd, bool use_function, bool
 		if( use_builtin )
 		{
 			builtin_get_names( possible_comp );
-			complete_strings( this->completions, str_cmd, 0, &builtin_get_desc, possible_comp, 0 );
+			this->complete_strings( str_cmd, 0, &builtin_get_desc, possible_comp, 0 );
 		}
 
 	}
@@ -1143,7 +1181,7 @@ void completer_t::complete_from_args( const wcstring &str,
     if (! is_autosuggest)
         proc_pop_interactive();
 	
-	complete_strings( this->completions, str, desc.c_str(), 0, possible_comp, flags );
+	this->complete_strings( str, desc.c_str(), 0, possible_comp, flags );
 }
 
 /**
@@ -1409,7 +1447,7 @@ bool completer_t::complete_param( const wcstring &scmd_orig, const wcstring &spo
 						completion[0] = o->short_opt;
 						completion[1] = 0;
 						
-						completion_allocate( this->completions, completion, desc, 0 );
+						append_completion( this->completions, completion, desc, 0 );
 
 					}
 
@@ -1461,14 +1499,14 @@ bool completer_t::complete_param( const wcstring &scmd_orig, const wcstring &spo
 								  homebrew getopt-like functions.
 								*/
 								wcstring completion = format_string(L"%ls=", whole_opt.c_str()+offset);						
-								completion_allocate( this->completions,
+								append_completion( this->completions,
 													 completion,
 													 C_(o->desc.c_str()),
 													 flags );									
 								
 							}
 							
-							completion_allocate( this->completions,
+							append_completion( this->completions,
 												 whole_opt.c_str() + offset,
 												 C_(o->desc.c_str()),
 												 flags );
@@ -1578,7 +1616,7 @@ bool completer_t::complete_variable(const wcstring &str, int start_offset)
                     desc = format_string(COMPLETE_VAR_DESC_VAL, value.c_str());
             }
                             
-            completion_allocate( this->completions,  comp.c_str(), desc.c_str(), flags );
+            append_completion( this->completions,  comp.c_str(), desc.c_str(), flags );
             res =1;
 			
 		}
@@ -1653,7 +1691,7 @@ bool completer_t::try_complete_user( const wcstring &str )
 					if( wcsncmp( user_name, pw_name, name_len )==0 )
 					{
                         wcstring desc = format_string(COMPLETE_USER_DESC, pw_name);						
-						completion_allocate( this->completions, 
+						append_completion( this->completions, 
 											 &pw_name[name_len],
 											 desc,
 											 COMPLETE_NO_SPACE );
@@ -1665,7 +1703,7 @@ bool completer_t::try_complete_user( const wcstring &str )
 						wcstring name = format_string(L"~%ls", pw_name);
                         wcstring desc = format_string(COMPLETE_USER_DESC, pw_name);
 							
-						completion_allocate( this->completions, 
+						append_completion( this->completions, 
 											 name,
 											 desc,
 											 COMPLETE_NO_CASE | COMPLETE_DONT_ESCAPE | COMPLETE_NO_SPACE );

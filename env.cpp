@@ -63,12 +63,18 @@
 /**
    Command used to start fishd
 */
-#define FISHD_CMD L"fishd ^/tmp/fishd.log.%s"
+#define FISHD_CMD L"fishd ^ /tmp/fishd.log.%s"
 
 /**
    Value denoting a null string
 */
 #define ENV_NULL L"\x1d"
+
+/** Some configuration path environment variables */
+#define FISH_DATADIR_VAR L"__fish_datadir"
+#define FISH_SYSCONFDIR_VAR L"__fish_sysconfdir"
+#define FISH_HELPDIR_VAR L"__fish_help_dir"
+#define FISH_BIN_DIR L"__fish_bin_dir"
 
 /**
    At init, we read all the environment variables from this array.
@@ -235,8 +241,21 @@ static void start_fishd()
 		debug( 0, _( L"Could not get user information" ) );
 		return;
 	}
-	
-    wcstring cmd = format_string(FISHD_CMD, pw->pw_name);	
+    
+    wcstring cmd = format_string(FISHD_CMD, pw->pw_name);
+    
+    /* Prefer the fishd in __fish_bin_dir, if exists */
+    const env_var_t bin_dir = env_get_string(L"__fish_bin_dir");
+    if (! bin_dir.missing_or_empty())
+    {
+        wcstring path = bin_dir + L"/fishd";
+        if (waccess(path, X_OK) == 0)
+        {
+            /* The path command just looks like 'fishd', so insert the bin path to make it absolute */
+            cmd.insert(0, bin_dir + L"/");
+        }
+    }
+    
     parser_t &parser = parser_t::principal_parser();
 	parser.eval( cmd, io_chain_t(), TOP );
 }
@@ -510,7 +529,7 @@ static bool variable_can_be_array(const wchar_t *key) {
     }
 }
 
-void env_init()
+void env_init(const struct config_paths_t *paths /* or NULL */)
 {
 	char **p;
 	struct passwd *pw;
@@ -560,7 +579,7 @@ void env_init()
 	  Now the environemnt variable handling is set up, the next step
 	  is to insert valid data
 	*/
-	
+	    
 	/*
 	  Import environment variables
 	*/
@@ -600,6 +619,15 @@ void env_init()
 		free(key);
 	}
 	
+    /* Set the given paths in the environment, if we have any */
+    if (paths != NULL)
+    {
+        env_set(FISH_DATADIR_VAR, paths->data.c_str(), ENV_GLOBAL | ENV_EXPORT);
+        env_set(FISH_SYSCONFDIR_VAR, paths->sysconf.c_str(), ENV_GLOBAL | ENV_EXPORT);
+        env_set(FISH_HELPDIR_VAR, paths->doc.c_str(), ENV_GLOBAL | ENV_EXPORT);
+        env_set(FISH_BIN_DIR, paths->bin.c_str(), ENV_GLOBAL | ENV_EXPORT);
+    }
+    
 	/*
 	  Set up the PATH variable
 	*/
@@ -901,8 +929,7 @@ int env_set(const wcstring &key, const wchar_t *val, int var_mode)
             }
             
 			entry->val = val;
-			
-			node->env.insert(std::pair<wcstring, var_entry_t*>(key, entry));
+			node->env[key] = entry;
             
 			if( entry->exportv )
             {
@@ -1148,36 +1175,46 @@ int env_exist( const wchar_t *key, int mode )
 	{
 		if( is_read_only(key) || is_electric(key) )
 		{
+            //Such variables are never exported
+            if (mode & ENV_EXPORT)
+            {
+                return 0;
+            }
+            else if (mode & ENV_UNEXPORT)
+            {
+                return 1;
+            }
 			return 1;
 		}
 	}
 
-	if( ! (mode & ENV_UNIVERSAL) )
+    if( !(mode & ENV_UNIVERSAL) )
 	{
 		env = (mode & ENV_GLOBAL)?global_env:top;
 					
 		while( env != 0 )
 		{
 			var_table_t::iterator result = env->env.find( key );
+
 			if ( result != env->env.end() )
 			{ 
 				res  = result->second; 
-			}
-			else
-			{
-				res = 0;
-			}
 
-			if( res != 0 )
-			{
-				return 1;
+                if (mode & ENV_EXPORT)
+                {
+                    return res->exportv == 1;
+                }
+                else if (mode & ENV_UNEXPORT)
+                {
+                    return res->exportv == 0;
+                }
+                
+                return 1;
 			}
-			
-			if( mode & ENV_LOCAL )
-			{
-				break;
-			}
-			
+		
+            if ( mode & ENV_LOCAL )
+                break;	
+
 			if( env->new_scope )
 			{
 				env = global_env;
@@ -1188,8 +1225,8 @@ int env_exist( const wchar_t *key, int mode )
 			}
 		}	
 	}
-	
-	if( ! (mode & ENV_LOCAL) && ! (mode & ENV_GLOBAL) )
+
+    if( !(mode & ENV_LOCAL) && !(mode & ENV_GLOBAL) )
 	{
 		if( ! get_proc_had_barrier())
 		{
@@ -1198,10 +1235,23 @@ int env_exist( const wchar_t *key, int mode )
 		}
 		
 		item = env_universal_get( key );
-	
-	}
-	return item != 0;
 
+        if (item != NULL)
+        {
+            if (mode & ENV_EXPORT)
+            {
+                return env_universal_get_export(key) == 1; 
+            }
+            else if (mode & ENV_UNEXPORT)
+            {
+                return env_universal_get_export(key) == 0; 
+            }
+
+            return 1;
+        }
+	}
+
+	return 0;
 }
 
 /**
@@ -1397,7 +1447,8 @@ static void get_exported( const env_node_t *n, std::map<wcstring, wcstring> &h )
 		var_entry_t *val_entry = iter->second;	
 		if( val_entry->exportv && (val_entry->val != ENV_NULL ) )
 		{	
-			h.insert(std::pair<wcstring, wcstring>(key, val_entry->val));
+            // Don't use std::map::insert here, since we need to overwrite existing values from previous scopes
+            h[key] = val_entry->val;
 		}
 	}
 }
@@ -1455,12 +1506,11 @@ static void update_export_array_if_necessary(bool recalc) {
 			const wcstring &key = uni.at(i);
 			const wchar_t *val = env_universal_get( key.c_str() );
 
-			std::map<wcstring, wcstring>::iterator result = vals.find( key ); 
-			if( wcscmp( val, ENV_NULL) && ( result == vals.end() ) )
-			{
+			if (wcscmp( val, ENV_NULL)) {
+				// Note that std::map::insert does NOT overwrite a value already in the map,
+				// which we depend on here
 				vals.insert(std::pair<wcstring, wcstring>(key, val));
 			}
-
 		}
         
         std::vector<std::string> local_export_buffer;
@@ -1485,24 +1535,44 @@ void env_export_arr(bool recalc, null_terminated_array_t<char> &output)
     output = export_array;
 }
 
-env_vars::env_vars(const wchar_t * const *keys)
+env_vars_snapshot_t::env_vars_snapshot_t(const wchar_t * const *keys)
 {
     ASSERT_IS_MAIN_THREAD();
+    wcstring key;
     for (size_t i=0; keys[i]; i++) {
-        const env_var_t val = env_get_string(keys[i]);
-        if (!val.missing()) {
-            vars[keys[i]] = val;
+        key.assign(keys[i]);
+        const env_var_t val = env_get_string(key);
+        if (! val.missing()) {
+            vars[key] = val;
         }
     }
 }
 
-env_vars::env_vars() { }
+env_vars_snapshot_t::env_vars_snapshot_t() { }
 
-const wchar_t *env_vars::get(const wchar_t *key) const
+/* The "current" variables are not a snapshot at all, but instead trampoline to env_get_string, etc. We identify the current snapshot based on pointer values. */
+static const env_vars_snapshot_t sCurrentSnapshot;
+const env_vars_snapshot_t &env_vars_snapshot_t::current()
 {
-    std::map<wcstring, wcstring>::const_iterator iter = vars.find(key);
-    return (iter == vars.end() ? NULL : iter->second.c_str());
+    return sCurrentSnapshot;
 }
 
-const wchar_t * const env_vars::highlighting_keys[] = {L"PATH", L"CDPATH", L"HIGHLIGHT_DELAY", L"fish_function_path", NULL};
+bool env_vars_snapshot_t::is_current() const
+{
+    return this == &sCurrentSnapshot;
+}
 
+env_var_t env_vars_snapshot_t::get(const wcstring &key) const
+{
+    /* If we represent the current state, bounce to env_get_string */
+    if (this->is_current())
+    {
+        return env_get_string(key);
+    }
+    else {
+        std::map<wcstring, wcstring>::const_iterator iter = vars.find(key);
+        return (iter == vars.end() ? env_var_t::missing_var() : env_var_t(iter->second));
+    }
+}
+
+const wchar_t * const env_vars_snapshot_t::highlighting_keys[] = {L"PATH", L"CDPATH", L"fish_function_path", NULL};

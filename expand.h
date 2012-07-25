@@ -46,7 +46,10 @@ enum {
     DIRECTORIES_ONLY = 1 << 5,
     
     /** Don't generate descriptions */
-    EXPAND_NO_DESCRIPTIONS = 1 << 6
+    EXPAND_NO_DESCRIPTIONS = 1 << 6,
+    
+    /** Don't do process expansion */
+    EXPAND_SKIP_PROCESS = 1 << 7
 };
 typedef int expand_flags_t;
 
@@ -189,5 +192,9 @@ int expand_is_clean( const wchar_t *in );
 */
 void expand_variable_error( parser_t &parser, const wchar_t *token, int token_pos, int error_pos );
 
+/**
+   Testing function for getting all process names.
+*/
+std::vector<wcstring> expand_get_all_process_names(void);
 
 #endif

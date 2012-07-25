@@ -9,13 +9,11 @@
 #include "common.h"
 #include "pthread.h"
 #include <vector>
-#include <deque>
 #include <utility>
 #include <list>
-#include <tr1/memory>
 #include <set>
 
-typedef std::list<wcstring> path_list_t;
+typedef std::vector<wcstring> path_list_t;
 
 enum history_search_type_t {
     /** The history searches for strings containing the given string */
@@ -57,16 +55,18 @@ class history_item_t {
     
     const path_list_t &get_required_paths() const { return required_paths; }
     
-    bool write_to_file(FILE *f) const;
-    
     bool operator==(const history_item_t &other) const {
         return contents == other.contents &&
                creation_timestamp == other.creation_timestamp &&
                required_paths == other.required_paths;
     }
-    
-    /* Functions for testing only */
-    
+};
+
+/* The type of file that we mmap'd */
+enum history_file_type_t {
+    history_type_unknown,
+    history_type_fish_2_0,
+    history_type_fish_1_x
 };
 
 class history_t {
@@ -96,15 +96,21 @@ private:
 	
 	/** New items. */
 	std::vector<history_item_t> new_items;
-    
+
+  	/** Deleted item contents. */
+	std::set<wcstring> deleted_items;
+
 	/** How many items we've added without saving */
 	size_t unsaved_item_count;
     
 	/** The mmaped region for the history file */
 	const char *mmap_start;
 
-	/** The size of the mmaped region */
+	/** The size of the mmap'd region */
 	size_t mmap_length;
+
+    /** The type of file we mmap'd */
+    history_file_type_t mmap_type;
 
     /** Timestamp of when this history was created */
     const time_t birth_timestamp;
@@ -112,12 +118,10 @@ private:
 	/** Timestamp of last save */
 	time_t save_timestamp;
     
-    static history_item_t decode_item(const char *ptr, size_t len);
-    
     void populate_from_mmap(void);
     
     /** List of old items, as offsets into out mmap data */
-    std::deque<size_t> old_item_offsets;
+    std::vector<size_t> old_item_offsets;
     
     /** Whether we've loaded old items */
     bool loaded_old;
@@ -130,13 +134,24 @@ private:
     
     /** Saves history */
     void save_internal();
+
+    /* Versioned decoding */
+    static history_item_t decode_item_fish_2_0(const char *base, size_t len);
+    static history_item_t decode_item_fish_1_x(const char *base, size_t len);
+    static history_item_t decode_item(const char *base, size_t len, history_file_type_t type);
         
 public:
     /** Returns history with the given name, creating it if necessary */
     static history_t & history_with_name(const wcstring &name);
     
+    /** Determines whether the history is empty. Unfortunately this cannot be const, since it may require populating the history. */
+    bool is_empty(void);
+    
     /** Add a new history item to the end */
     void add(const wcstring &str, const path_list_t &valid_paths = path_list_t());
+
+    /** Remove a history item */
+    void remove(const wcstring &str);
     
     /** Add a new history item to the end */
     void add_with_file_detection(const wcstring &str);
@@ -147,11 +162,16 @@ public:
     /** Irreversibly clears history */
     void clear();
     
+    /** Populates from a bash history file */
+    void populate_from_bash(FILE *f);
+    
     /* Gets all the history into a string with ARRAY_SEP_STR. This is intended for the $history environment variable. This may be long! */
     void get_string_representation(wcstring &str, const wcstring &separator);
     
     /** Return the specified history at the specified index. 0 is the index of the current commandline. (So the most recent item is at index 1.) */
     history_item_t item_at_index(size_t idx);
+    
+    bool is_deleted(const history_item_t &item) const;
 };
 
 class history_search_t {
@@ -164,7 +184,7 @@ class history_search_t {
     
     /** Our list of previous matches as index, value. The end is the current match. */
     typedef std::pair<size_t, history_item_t> prev_match_t;
-    std::deque<prev_match_t> prev_matches;
+    std::vector<prev_match_t> prev_matches;
 
     /** Returns yes if a given term is in prev_matches. */
     bool match_already_made(const wcstring &match) const;

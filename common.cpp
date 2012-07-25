@@ -104,6 +104,10 @@ static struct winsize termsize;
 
 void show_stackframe() 
 {
+    /* Hack to avoid showing backtraces in the tester */
+    if (program_name && ! wcscmp(program_name, L"(ignore)"))
+        return;
+    
 	void *trace[32];
 	char **messages = (char **)NULL;
 	int i, trace_size = 0;
@@ -122,16 +126,40 @@ void show_stackframe()
 	}
 }
 
-wcstring_list_t completions_to_wcstring_list( const std::vector<completion_t> &list )
+int fgetws2(wcstring *s, FILE *f)
 {
-    wcstring_list_t strings;
-    strings.reserve(list.size());
-    for (std::vector<completion_t>::const_iterator iter = list.begin(); iter != list.end(); ++iter) {
-        strings.push_back(iter->completion);
-    }
-    return strings;
-}
+	int i=0;
+	wint_t c;
 
+	while( 1 )
+	{
+		errno=0;
+
+		c = getwc( f );
+		
+		if( errno == EILSEQ )
+		{
+			continue;
+		}
+			
+		switch( c )
+		{
+			/* End of line */ 
+			case WEOF:
+			case L'\n':
+			case L'\0':
+				return i;				
+				/* Ignore carriage returns */
+			case L'\r':
+				break;
+				
+			default:
+                i++;
+				s->push_back((wchar_t)c);
+				break;
+		}
+	}
+}
 
 int fgetws2( wchar_t **b, int *len, FILE *f )
 {
@@ -191,21 +219,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 
 }
 
-
-static bool string_sort_predicate(const wcstring& d1, const wcstring& d2)
-{
-    return wcsfilecmp(d1.c_str(), d2.c_str()) < 0;
-}
-
-void sort_strings( std::vector<wcstring> &strings)
-{
-    std::sort(strings.begin(), strings.end(), string_sort_predicate);
-}
-
-void sort_completions( std::vector<completion_t> &completions)
-{
-    std::sort(completions.begin(), completions.end());
-}
 wchar_t *str2wcs( const char *in )
 {
 	wchar_t *out;
@@ -507,18 +520,7 @@ int wcsvarchr( wchar_t chr )
 */
 int my_wcswidth( const wchar_t *c )
 {
-	int res=0;
-	while( *c )
-	{
-		int w = wcwidth( *c++ );
-		if( w < 0 )
-			w = 1;
-		if( w > 2 )
-			w=1;
-		
-		res += w;		
-	}
-	return res;
+	return fish_wcswidth(c, wcslen(c));
 }
 
 wchar_t *quote_end( const wchar_t *pos )
@@ -555,7 +557,7 @@ wcstring wsetlocale(int category, const wchar_t *locale)
 {
 
 	char *lang = NULL;
-	if (locale && wcscmp(locale,L"")){
+	if (locale){
 		lang = wcs2str( locale );
 	}
 	char * res = setlocale(category,lang);
@@ -623,9 +625,9 @@ int read_blocked(int fd, void *buf, size_t count)
 
 	sigemptyset( &chldset );
 	sigaddset( &chldset, SIGCHLD );
-	sigprocmask(SIG_BLOCK, &chldset, &oldset);
+	VOMIT_ON_FAILURE(pthread_sigmask(SIG_BLOCK, &chldset, &oldset));
 	res = read( fd, buf, count );
-	sigprocmask( SIG_SETMASK, &oldset, 0 );
+	VOMIT_ON_FAILURE(pthread_sigmask(SIG_SETMASK, &oldset, NULL));
 	return res;	
 }
 
@@ -666,30 +668,53 @@ ssize_t read_loop(int fd, void *buff, size_t count)
     return result;
 }
 
-void debug( int level, const wchar_t *msg, ... )
+static bool should_debug(int level)
 {
-	va_list va;
-
-	wcstring sb;
-
-	int errno_old = errno;
-	
 	if( level > debug_level )
-		return;
+		return false;
 
-	CHECK( msg, );
-		
-	sb = format_string(L"%ls: ", program_name);
-	va_start(va, msg);
-	sb.append(vformat_string(msg, va));
-	va_end(va);
+    /* Hack to not print error messages in the tests */
+    if ( program_name && ! wcscmp(program_name, L"(ignore)") )
+        return false;
+        
+    return true;
+}
 
+static void debug_shared( const wcstring &msg )
+{
+    const wcstring sb = wcstring(program_name) + L": " + msg;
 	wcstring sb2;
 	write_screen( sb, sb2 );
 	fwprintf( stderr, L"%ls", sb2.c_str() );	
-
-	errno = errno_old;
 }
+
+void debug( int level, const wchar_t *msg, ... )
+{
+    if (! should_debug(level))
+        return;
+    int errno_old = errno;
+    va_list va;
+	va_start(va, msg);
+    wcstring local_msg = vformat_string(msg, va);
+	va_end(va);
+    debug_shared(local_msg);
+    errno = errno_old;
+}
+
+void debug( int level, const char *msg, ... )
+{
+    if (! should_debug(level))
+        return;
+    int errno_old = errno;
+    char local_msg[512];
+    va_list va;
+	va_start(va, msg);
+    vsnprintf(local_msg, sizeof local_msg, msg, va);
+	va_end(va);
+    debug_shared(str2wcstring(local_msg));
+    errno = errno_old;
+}
+
 
 void debug_safe(int level, const char *msg, const char *param1, const char *param2, const char *param3, const char *param4, const char *param5, const char *param6, const char *param7, const char *param8, const char *param9, const char *param10, const char *param11, const char *param12)
 {
@@ -815,13 +840,13 @@ void write_screen( const wcstring &msg, wcstring &buff )
 				  Check is token is wider than one line.
 				  If so we mark it as an overflow and break the token.
 				*/
-				if((tok_width + wcwidth(*pos)) > (screen_width-1))
+				if((tok_width + fish_wcwidth(*pos)) > (screen_width-1))
 				{
 					overflow = 1;
 					break;				
 				}
 			
-				tok_width += wcwidth( *pos );
+				tok_width += fish_wcwidth( *pos );
 				pos++;
 			}
 
@@ -898,13 +923,13 @@ static wchar_t *escape_simple( const wchar_t *in )
 	return out;
 }
 
-wchar_t *escape( const wchar_t *in_orig, 
-		 int flags )
+wchar_t *escape( const wchar_t *in_orig, escape_flags_t flags )
 {
 	const wchar_t *in = in_orig;
 	
-	int escape_all = flags & ESCAPE_ALL;
-	int no_quoted  = flags & ESCAPE_NO_QUOTED;
+	bool escape_all = !! (flags & ESCAPE_ALL);
+	bool no_quoted  = !! (flags & ESCAPE_NO_QUOTED);
+    bool no_tilde = !! (flags & ESCAPE_NO_TILDE);
 	
 	wchar_t *out;
 	wchar_t *pos;
@@ -955,8 +980,8 @@ wchar_t *escape( const wchar_t *in_orig,
 		}
 		else
 		{
-			
-			switch( *in )
+            wchar_t c = *in;
+			switch( c )
 			{
 				case L'\t':
 					*(pos++) = L'\\';
@@ -1020,9 +1045,12 @@ wchar_t *escape( const wchar_t *in_orig,
 				case L'%':
 				case L'~':
 				{
-					need_escape=1;
-					if( escape_all )
-						*pos++ = L'\\';
+                    if (! no_tilde || c != L'~')
+                    {
+                        need_escape=1;
+                        if( escape_all )
+                            *pos++ = L'\\';
+                    }
 					*pos++ = *in;
 					break;
 				}
@@ -1076,13 +1104,12 @@ wchar_t *escape( const wchar_t *in_orig,
 	return out;
 }
 
-wcstring escape_string( const wcstring &in, int escape_all ) {
-    wchar_t *tmp = escape(in.c_str(), escape_all);
+wcstring escape_string( const wcstring &in, escape_flags_t flags ) {
+    wchar_t *tmp = escape(in.c_str(), flags);
     wcstring result(tmp);
     free(tmp);
     return result;
 }
-
 
 wchar_t *unescape( const wchar_t * orig, int flags )
 {
@@ -1943,9 +1970,12 @@ void configure_thread_assertions_for_testing(void) {
 }
 
 /* Notice when we've forked */
-static pid_t initial_pid;
+static pid_t initial_pid = 0;
 
 bool is_forked_child(void) {
+    /* Just bail if nobody's called setup_fork_guards - e.g. fishd */
+    if (! initial_pid) return false;
+    
     bool is_child_of_fork = (getpid() != initial_pid);
     if (is_child_of_fork) {
         printf("Uh-oh: %d\n", getpid());
@@ -2018,4 +2048,21 @@ scoped_lock::scoped_lock(pthread_mutex_t &mutex) : lock_obj(&mutex), locked(fals
 
 scoped_lock::~scoped_lock() {
     if (locked) this->unlock();
+}
+
+wcstokenizer::wcstokenizer(const wcstring &s, const wcstring &separator) : sep(separator) {
+    buffer = wcsdup(s.c_str());
+    str = buffer;
+    state = NULL;
+}
+
+bool wcstokenizer::next(wcstring &result) {
+    wchar_t *tmp = wcstok(str, sep.c_str(), &state);
+    str = NULL;
+    if (tmp) result = tmp;
+    return tmp != NULL;
+}
+    
+wcstokenizer::~wcstokenizer() {
+    free(buffer);
 }

@@ -70,6 +70,9 @@
 */
 #define HIGHLIGHT_AUTOSUGGESTION 0x2000
 
+class history_item_t;
+struct file_detection_context_t;
+
 /**
    Perform syntax highlighting for the shell commands in buff. The result is
    stored in the color array as a color_code from the HIGHLIGHT_ enum
@@ -80,7 +83,7 @@
    \param pos the cursor position. Used for quote matching, etc.
    \param error a list in which a description of each error will be inserted. May be 0, in whcich case no error descriptions will be generated.
 */
-void highlight_shell( const wcstring &buffstr, std::vector<int> &color, int pos, wcstring_list_t *error, const env_vars &vars );
+void highlight_shell( const wcstring &buffstr, std::vector<int> &color, int pos, wcstring_list_t *error, const env_vars_snapshot_t &vars );
 
 /**
    Perform syntax highlighting for the text in buff. Matching quotes and paranthesis are highlighted. The result is
@@ -92,7 +95,7 @@ void highlight_shell( const wcstring &buffstr, std::vector<int> &color, int pos,
    \param pos the cursor position. Used for quote matching, etc.
    \param error a list in which a description of each error will be inserted. May be 0, in whcich case no error descriptions will be generated.
 */
-void highlight_universal( const wcstring &buffstr, std::vector<int> &color, int pos, wcstring_list_t *error, const env_vars &vars );
+void highlight_universal( const wcstring &buffstr, std::vector<int> &color, int pos, wcstring_list_t *error, const env_vars_snapshot_t &vars );
 
 /**
    Translate from HIGHLIGHT_* to FISH_COLOR_* according to environment
@@ -109,9 +112,9 @@ rgb_color_t highlight_get_color( int highlight, bool is_background );
 /** Given a command 'str' from the history, try to determine whether we ought to suggest it by specially recognizing the command.
     Returns true if we validated the command. If so, returns by reference whether the suggestion is valid or not.
 */
-bool autosuggest_special_validate_from_history(const wcstring &str, const wcstring &working_directory, bool *outSuggestionOK);
+bool autosuggest_validate_from_history(const history_item_t &item, file_detection_context_t &detector, const wcstring &working_directory, const env_vars_snapshot_t &vars);
 
-/** Given the command line contents 'str', return via reference a suggestion by specially recognizing the command. Returns true if we recognized the command (even if we couldn't think of a suggestion for it).
+/** Given the command line contents 'str', return via reference a suggestion by specially recognizing the command. The suggestion is escaped. Returns true if we recognized the command (even if we couldn't think of a suggestion for it).
 */
 bool autosuggest_suggest_special(const wcstring &str, const wcstring &working_directory, wcstring &outString);
 
@@ -119,7 +122,15 @@ bool autosuggest_suggest_special(const wcstring &str, const wcstring &working_di
 
     This is used only internally to this file, and is exposed only for testing.
 */
-bool is_potential_path(const wcstring &const_path, const wcstring_list_t &directories, bool require_dir = false, wcstring *out_path = NULL);
+enum {
+    /* The path must be to a directory */
+    PATH_REQUIRE_DIR = 1 << 0,
+    
+    /* Expand any leading tilde in the path */
+    PATH_EXPAND_TILDE = 1 << 1
+};
+typedef unsigned int path_flags_t;
+bool is_potential_path(const wcstring &const_path, const wcstring_list_t &directories, path_flags_t flags, wcstring *out_path = NULL);
 
 #endif
 

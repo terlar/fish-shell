@@ -114,13 +114,12 @@ int autoload_t::load( const wcstring &cmd, bool reload )
 	return res;
 }
 
-bool autoload_t::can_load( const wcstring &cmd, const env_vars &vars )
+bool autoload_t::can_load( const wcstring &cmd, const env_vars_snapshot_t &vars )
 {
-    const wchar_t *path_var_ptr = vars.get(env_var_name.c_str());
-    if (! path_var_ptr || ! path_var_ptr[0])
+    const env_var_t path_var = vars.get(env_var_name);
+    if (path_var.missing_or_empty())
         return false;
-    
-    const wcstring path_var(path_var_ptr);        
+
     std::vector<wcstring> path_list;
 	tokenize_variable_array( path_var, path_list );
     return this->locate_file_and_maybe_load_it( cmd, false, false, path_list );
@@ -197,11 +196,11 @@ bool autoload_t::locate_file_and_maybe_load_it( const wcstring &cmd, bool really
         if (! func) {
             /* Can't use a function that doesn't exist */
             use_cached = false;
-        } else if ( ! allow_stale_functions && is_stale(func)) {
-            /* Can't use a stale function */
-            use_cached = false;
         } else if (really_load && ! func->is_placeholder && ! func->is_loaded) {
             /* Can't use an unloaded function */
+            use_cached = false;
+        } else if ( ! allow_stale_functions && is_stale(func)) {
+            /* Can't use a stale function */
             use_cached = false;
         } else {
             /* I guess we can use it */
@@ -266,7 +265,7 @@ bool autoload_t::locate_file_and_maybe_load_it( const wcstring &cmd, bool really
                 autoload_function_t *func = this->get_node(cmd);
                 
                 /* Generate the source if we need to load it */
-                bool need_to_load_function = really_load && (func == NULL || func->access.mod_time == access.mod_time || ! func->is_loaded);
+                bool need_to_load_function = really_load && (func == NULL || func->access.mod_time != access.mod_time || ! func->is_loaded);
                 if (need_to_load_function) {
                 
                     /* Generate the script source */

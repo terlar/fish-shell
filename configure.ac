@@ -9,7 +9,7 @@
 # configure the build process.
 #
 
-AC_INIT(fish,1.23.1,fish-users@lists.sf.net)
+AC_INIT(fish,2.0.0,fish-users@lists.sf.net)
 
 #
 # preserve configure arguments for xsel
@@ -104,8 +104,9 @@ fi
 # This mostly helps OS X users, since fink usually installs out of
 # tree and doesn't update CFLAGS.
 #
+# It also helps FreeBSD which puts libiconv in /usr/local/lib
 
-for i in /usr/pkg /sw /opt /opt/local; do
+for i in /usr/pkg /sw /opt /opt/local /usr/local; do
 
 	AC_MSG_CHECKING([for $i/include include directory])
 	if test -d $i/include; then
@@ -119,7 +120,7 @@ for i in /usr/pkg /sw /opt /opt/local; do
 	AC_MSG_CHECKING([for $i/lib library directory])
 	if test -d $i/lib; then
 		AC_MSG_RESULT(yes)
-		LDFLAGS="$LDFLAGS -L$i/lib/ -R$i/lib/"
+		LDFLAGS="$LDFLAGS -L$i/lib/ -Wl,-rpath,$i/lib/"
 	else
 		AC_MSG_RESULT(no)
 	fi
@@ -512,7 +513,7 @@ LIBS="$LIBS_SHARED"
 if test x$local_gettext != xno; then
 	AC_SEARCH_LIBS( gettext, intl,,)
 fi
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
 LIBS_FISH_PAGER=$LIBS
 LIBS=$LIBS_COMMON
 
@@ -525,7 +526,7 @@ LIBS="$LIBS_SHARED"
 if test x$local_gettext != xno; then
 	AC_SEARCH_LIBS( gettext, intl,,)
 fi
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
 LIBS_FISHD=$LIBS
 LIBS=$LIBS_COMMON
 

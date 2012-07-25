@@ -5,7 +5,7 @@
 
 	1). Create a function in builtin.c with the following signature:
 
-	<tt>static int builtin_NAME( wchar_t ** args )</tt>
+	<tt>static int builtin_NAME( parser_t &parser, wchar_t ** args )</tt>
 
 	where NAME is the name of the builtin, and args is a zero-terminated list of arguments.
 
@@ -63,12 +63,12 @@
 #include "parser_keywords.h"
 #include "expand.h"
 #include "path.h"
-
+#include "history.h"
 
 /**
    The default prompt for the read command
 */
-#define DEFAULT_READ_PROMPT L"set_color green; echo read; set_color normal; echo \"> \""
+#define DEFAULT_READ_PROMPT L"set_color green; echo -n read; set_color normal; echo -n \"> \""
 
 /**
    The mode name to pass to history and input
@@ -142,7 +142,7 @@ struct io_stack_elem_t {
     wcstring out;
     wcstring err;
 };
-static std::stack<io_stack_elem_t> io_stack;
+static std::stack<io_stack_elem_t, std::vector<io_stack_elem_t> > io_stack;
 
 /**
    The file from which builtin functions should attempt to read, use
@@ -1085,6 +1085,8 @@ static int builtin_generic( parser_t &parser, wchar_t **argv )
 */
 static void functions_def( const wcstring &name, wcstring &out )
 {
+    CHECK( ! name.empty(), );
+    
     wcstring desc, def;
     function_get_desc(name, &desc);
     function_get_definition(name, &def);
@@ -1097,7 +1099,13 @@ static void functions_def( const wcstring &name, wcstring &out )
 	event_get( &search, &ev );
 
     out.append(L"function ");
-    out.append(name);
+    
+    /* Typically we prefer to specify the function name first, e.g. "function foo --description bar"
+       But If the function name starts with a -, we'll need to output it after all the options. */
+    bool defer_function_name = (name.at(0) == L'-');
+    if ( ! defer_function_name ){
+        out.append(name);
+    }
 
 	if (! desc.empty())
 	{
@@ -1165,7 +1173,12 @@ static void functions_def( const wcstring &name, wcstring &out )
 			append_format( out, L" %ls", named.at(i).c_str() );
 		}
 	}
-	
+
+    /* Output the function name if we deferred it */
+    if ( defer_function_name ){
+        out.append(L" -- ");
+        out.append(name);
+    }
     
     /* This forced tab is sort of crummy - not all functions start with a tab */
     append_format( out, L"\n\t%ls", def.c_str());
@@ -1715,6 +1728,8 @@ static int builtin_function( parser_t &parser, wchar_t **argv )
 				break;
 				
 			case 'h':
+				parser.pop_block();
+				parser.push_block( FAKE );
 				builtin_print_help( parser, argv[0], stdout_buffer );
 				return STATUS_BUILTIN_OK;
 				
@@ -2576,7 +2591,7 @@ static int builtin_exit( parser_t &parser, wchar_t **argv )
 static int builtin_cd( parser_t &parser, wchar_t **argv )
 {
 	env_var_t dir_in;
-	wchar_t *dir = NULL;
+	wcstring dir;
 	int res=STATUS_BUILTIN_OK;
 
 	
@@ -2594,11 +2609,13 @@ static int builtin_cd( parser_t &parser, wchar_t **argv )
 		dir_in = argv[1];
     }
 
-    if (! dir_in.missing()) {
-        dir = path_allocate_cdpath(dir_in);
+    bool got_cd_path = false;
+    if (! dir_in.missing())
+    {
+        got_cd_path = path_get_cdpath(dir_in, &dir);
     }
 
-	if( !dir )
+	if( !got_cd_path )
 	{
 		if( errno == ENOTDIR )
 		{
@@ -2650,7 +2667,7 @@ static int builtin_cd( parser_t &parser, wchar_t **argv )
 			append_format(stderr_buffer,
 				   _( L"%ls: Permission denied: '%ls'\n" ),
 				   argv[0],
-				   dir );
+				   dir.c_str() );
 			
 		}
 		else
@@ -2659,7 +2676,7 @@ static int builtin_cd( parser_t &parser, wchar_t **argv )
 			append_format(stderr_buffer,
 				   _( L"%ls: '%ls' is not a directory\n" ),
 				   argv[0],
-				   dir );
+				   dir.c_str() );
 		}
 		
 		if( !get_is_interactive() )
@@ -2674,8 +2691,6 @@ static int builtin_cd( parser_t &parser, wchar_t **argv )
 		res=1;
 		append_format(stderr_buffer, _( L"%ls: Could not set PWD variable\n" ), argv[0] );
 	}
-
-    free(dir);
 
 	return res;
 }
@@ -2702,6 +2717,7 @@ static int builtin_contains( parser_t &parser, wchar_t ** argv )
 	argc = builtin_count_args( argv );
 	int i;
 	wchar_t *needle;
+	int index=0;
 	
 	woptind=0;
 
@@ -2710,6 +2726,10 @@ static int builtin_contains( parser_t &parser, wchar_t ** argv )
 		{
 			{
 				L"help", no_argument, 0, 'h'
+			}
+			,
+			{
+				L"index", no_argument, 0, 'i'
 			}
 			,
 			{
@@ -2724,7 +2744,7 @@ static int builtin_contains( parser_t &parser, wchar_t ** argv )
 
 		int opt = wgetopt_long( argc,
 					argv,
-					L"+h",
+					L"+hi",
 					long_options,
 					&opt_index );
 		if( opt == -1 )
@@ -2757,6 +2777,9 @@ static int builtin_contains( parser_t &parser, wchar_t ** argv )
 				builtin_unknown_option( parser, argv[0], argv[woptind-1] );
 				return STATUS_BUILTIN_ERROR;
 
+			case 'i':
+				index=1;
+				break;
 		}
 		
 	}
@@ -2775,6 +2798,7 @@ static int builtin_contains( parser_t &parser, wchar_t ** argv )
 		
 		if( !wcscmp( needle, argv[i]) )
 		{
+			if ( index ) append_format(stdout_buffer, L"%d\n", i-woptind );
 			return 0;
 		}
 	}
@@ -3309,18 +3333,29 @@ static int builtin_end( parser_t &parser, wchar_t **argv )
 				
 				if( d )
 				{
-					/**
-					   Copy the text from the beginning of the function
-					   until the end command and use as the new definition
-					   for the specified function
-					*/
+                    if (d->name.empty())
+                    {
+                        /* Disallow empty function names */
+                		append_format(stderr_buffer, _( L"%ls: No function name given\n" ), argv[0] );
+                        
+                        /* Return an error via a crummy way. Don't just return here, since we need to pop the block. */
+                        proc_set_last_status(STATUS_BUILTIN_ERROR);
+                    }
+                    else
+                    {
+                        /**
+                           Copy the text from the beginning of the function
+                           until the end command and use as the new definition
+                           for the specified function
+                        */
 
-					wchar_t *def = wcsndup( parser.get_buffer()+parser.current_block->tok_pos,
-											parser.get_job_pos()-parser.current_block->tok_pos );
-					d->definition = def;
-		
-					function_add( *d, parser );	
-					free( def );
+                        wchar_t *def = wcsndup( parser.get_buffer()+parser.current_block->tok_pos,
+                                                parser.get_job_pos()-parser.current_block->tok_pos );
+                        d->definition = def;
+            
+                        function_add( *d, parser );	
+                        free( def );
+                    }
 				}
 				else
 				{
@@ -3538,6 +3573,7 @@ static int builtin_switch( parser_t &parser, wchar_t **argv )
 		parser.current_block->state1<wcstring>() = argv[1];
 		parser.current_block->skip=1;
 		parser.current_block->state2<int>() = 0;
+        res = proc_get_last_status();
 	}
 	
 	return res;
@@ -3566,7 +3602,7 @@ static int builtin_case( parser_t &parser, wchar_t **argv )
 	
 	if( parser.current_block->state2<int>() )
 	{
-		return STATUS_BUILTIN_OK;
+		return proc_get_last_status();
 	}
 	
 	for( i=1; i<argc; i++ )
@@ -3586,7 +3622,133 @@ static int builtin_case( parser_t &parser, wchar_t **argv )
 		}
 	}
 	
-	return STATUS_BUILTIN_OK;
+	return proc_get_last_status();
+}
+
+
+/**
+   History of commands executed by user
+*/
+static int builtin_history( parser_t &parser, wchar_t **argv )
+{
+    int argc = builtin_count_args(argv);
+
+    bool search_history = false; 
+    bool delete_item = false;
+    bool search_prefix = false;
+    bool save_history = false;
+    bool clear_history = false;
+
+    wcstring delete_string;
+    wcstring search_string;
+
+    static const struct woption long_options[] =
+        {
+            { L"prefix", required_argument, 0, 'p' },
+            { L"delete", required_argument, 0, 'd' },
+            { L"search", no_argument, 0, 's' },
+            { L"contains", required_argument, 0, 'c' },
+            { L"save", no_argument, 0, 'v' },
+            { L"clear", no_argument, 0, 'l' },
+            { L"help", no_argument, 0, 'h' },
+            { 0, 0, 0, 0 }
+        };
+
+    int opt = 0;
+    int opt_index = 0;
+    woptind = 0;
+    history_t *history = reader_get_history();
+
+    while((opt = wgetopt_long_only( argc, argv, L"pdscvl", long_options, &opt_index )) != -1)
+    {
+        switch(opt)
+        {
+           case 'p':
+                search_prefix = true;
+                search_string = woptarg;
+                break;
+           case 'd':
+                delete_item = true;
+                delete_string = woptarg;
+                break;
+           case 's':
+                search_history = true;
+                break;
+           case 'c':
+                search_string = woptarg;
+                break;
+           case 'v':
+                save_history = true;
+                break;
+           case 'l':
+                clear_history = true;
+                break; 
+           case 'h':
+                builtin_print_help( parser, argv[0], stdout_buffer );
+                return STATUS_BUILTIN_OK;
+                break;
+           case '?':
+                append_format(stderr_buffer, BUILTIN_ERR_UNKNOWN, argv[0], argv[woptind-1]);
+                return STATUS_BUILTIN_ERROR;
+                break;
+           default:
+                append_format(stderr_buffer, BUILTIN_ERR_UNKNOWN, argv[0], argv[woptind-1]);
+                return STATUS_BUILTIN_ERROR;
+        }
+    }	
+
+    if (argc == 1)
+    {
+        wcstring full_history;
+        history->get_string_representation(full_history, wcstring(L"\n"));
+        stdout_buffer.append(full_history);
+        stdout_buffer.push_back('\n');
+        return STATUS_BUILTIN_OK;
+    }
+
+    if (search_history)
+    {
+        int res = STATUS_BUILTIN_ERROR;
+
+        if (search_string.empty())
+        {
+            append_format(stderr_buffer, BUILTIN_ERR_COMBO2, argv[0], L"Use --search with either --contains or --prefix");
+            return res;
+        }
+
+        history_search_t searcher = history_search_t(*history, search_string, search_prefix?HISTORY_SEARCH_TYPE_PREFIX:HISTORY_SEARCH_TYPE_CONTAINS);
+        while (searcher.go_backwards())
+        {
+            stdout_buffer.append(searcher.current_string());
+            stdout_buffer.append(L"\n"); 
+            res = STATUS_BUILTIN_OK;
+        }
+        return res;
+    }
+
+    if (delete_item)
+    {
+        if (delete_string[0] == '"' && delete_string[delete_string.length() - 1] == '"')
+            delete_string = delete_string.substr(1, delete_string.length() - 2);
+       
+        history->remove(delete_string);
+        return STATUS_BUILTIN_OK;
+    }
+
+    if (save_history)
+    {
+        history->save();
+        return STATUS_BUILTIN_OK;
+    }
+
+    if (clear_history)
+    {
+        history->clear();
+        history->save();
+        return STATUS_BUILTIN_OK;
+    }
+
+    return STATUS_BUILTIN_ERROR;
 }
 
 
@@ -3629,7 +3791,8 @@ static const builtin_data_t builtin_datas[]=
 	{ 		L"for",  &builtin_for, N_( L"Perform a set of commands multiple times" )   },
 	{ 		L"function",  &builtin_function, N_( L"Define a new function" )   },
 	{ 		L"functions",  &builtin_functions, N_( L"List or remove functions" )   },
-	{ 		L"if",  &builtin_generic, N_( L"Evaluate block if condition is true" )   },
+	{ 		L"history",  &builtin_history, N_( L"History of commands executed by user" )   },
+ 	{ 		L"if",  &builtin_generic, N_( L"Evaluate block if condition is true" )   },
 	{ 		L"jobs",  &builtin_jobs, N_( L"Print currently running jobs" )   },
 	{ 		L"not",  &builtin_generic, N_( L"Negate exit status of job" )  },
 	{ 		L"or",  &builtin_generic, N_( L"Execute command if previous command failed" )  },
@@ -3684,7 +3847,7 @@ static int internal_help( const wchar_t *cmd )
 {
 	CHECK( cmd, 0 );
 	return contains( cmd, L"for", L"while", L"function",
-			 L"if", L"end", L"switch", L"count" );
+			 L"if", L"end", L"switch", L"case", L"count" );
 }
 
 

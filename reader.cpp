@@ -118,7 +118,7 @@ commence.
    fish specific commands, meaning it will work even if fish is not
    installed. This is used by read_i.
 */
-#define DEFAULT_PROMPT L"echo \"$USER@\"; hostname|cut -d . -f 1; echo \" \"; pwd; printf '> ';"
+#define DEFAULT_PROMPT L"echo -n \"$USER@\"(hostname|cut -d . -f 1)' '(pwd)'> '"
 
 /**
    The name of the function that prints the fish prompt
@@ -306,6 +306,25 @@ class reader_data_t
     
     /** Whether the a screen reset is needed after a repaint. */
     bool screen_reset_needed;
+    
+    /** Constructor */
+    reader_data_t() :
+        suppress_autosuggestion(0),
+        history(0),
+        token_history_pos(0),
+        search_pos(0),
+        buff_pos(0),
+        complete_func(0),
+        highlight_function(0),
+        test_func(0),
+        end_loop(0),
+        prev_end_loop(0),
+        next(0),
+        search_mode(0),
+        repaint_needed(0),
+        screen_reset_needed(0)
+        {
+        }
 };
 
 /**
@@ -326,7 +345,7 @@ static int is_interactive_read;
 static int end_loop = 0;
 
 /** The stack containing names of files that are being parsed */
-static std::stack<const wchar_t *, std::list<const wchar_t *> > current_filename;
+static std::stack<const wchar_t *, std::vector<const wchar_t *> > current_filename;
 
 
 /**
@@ -424,15 +443,6 @@ static void reader_repaint()
     //Update the indentation
 	parser_t::principal_parser().test( data->command_line.c_str(), &data->indents[0], 0, 0 );
 	    
-#if 0
-	s_write( &data->screen,
-		 data->prompt_buff.c_str(),
-		 data->command_line.c_str(),
-		 &data->colors[0],
-		 &data->indents[0], 
-		 data->buff_pos );
-#else
-
     wcstring full_line = (data->autosuggestion.empty() ? data->command_line : data->autosuggestion);
     size_t len = std::max((size_t)1, full_line.size());
     
@@ -445,10 +455,10 @@ static void reader_repaint()
 	s_write( &data->screen,
 		 data->prompt_buff.c_str(),
 		 full_line.c_str(),
+         data->command_line.size(),
 		 &colors[0],
 		 &indents[0], 
 		 data->buff_pos );
-#endif
 	data->repaint_needed = false;
 }
 
@@ -539,8 +549,8 @@ void reader_data_t::command_line_changed() {
 
 
 /** Remove any duplicate completions in the list. This relies on the list first beeing sorted. */
-static void remove_duplicates(std::vector<completion_t> &l) {
-	
+static void remove_duplicates(std::vector<completion_t> &l)
+{
 	l.erase(std::unique( l.begin(), l.end()), l.end());
 }
 
@@ -578,6 +588,7 @@ void reader_write_title()
     bool recognized = false;
     recognized = recognized || contains( term, L"xterm", L"screen", L"nxterm", L"rxvt" );
     recognized = recognized || ! wcsncmp(term, L"xterm-", wcslen(L"xterm-"));
+    recognized = recognized || ! wcsncmp(term, L"screen-", wcslen(L"screen-"));
 
 	if( ! recognized )
 	{
@@ -608,7 +619,7 @@ void reader_write_title()
 		size_t i;
 		if( lst.size() > 0 )
 		{
-			writestr( L"\x1b]2;" );
+			writestr( L"\x1b]0;" );
 			for( i=0; i<lst.size(); i++ )
 			{
 				writestr( lst.at(i).c_str() );
@@ -729,9 +740,14 @@ static void remove_backward()
 
 	if( data->buff_pos <= 0 )
 		return;
-        
-    data->command_line.erase(data->buff_pos-1, 1);    
-	data->buff_pos--;
+    
+    /* Fake composed character sequences by continuning to delete until we delete a character of width at least 1. */
+    int width;
+    do {
+        data->buff_pos -= 1;
+        width = fish_wcwidth(data->command_line.at(data->buff_pos));
+        data->command_line.erase(data->buff_pos, 1);        
+    } while (width == 0 && data->buff_pos > 0);
     data->command_line_changed();
     data->suppress_autosuggestion = true;
 
@@ -801,130 +817,6 @@ static int comp_ilen( const wchar_t *a, const wchar_t *b )
 	return i;
 }
 
-/**
-   Find the outermost quoting style of current token. Returns 0 if
-   token is not quoted.
-
-*/
-static wchar_t get_quote( wchar_t *cmd, int len )
-{
-	int i=0;
-	wchar_t res=0;
-
-	while( 1 )
-	{
-		if( !cmd[i] )
-			break;
-
-		if( cmd[i] == L'\\' )
-		{
-			i++;
-			if( !cmd[i] )
-				break;
-			i++;			
-		}
-		else
-		{
-			if( cmd[i] == L'\'' || cmd[i] == L'\"' )
-			{
-				const wchar_t *end = quote_end( &cmd[i] );
-				//fwprintf( stderr, L"Jump %d\n",  end-cmd );
-				if(( end == 0 ) || (!*end) || (end-cmd > len))
-				{
-					res = cmd[i];
-					break;
-				}
-				i = end-cmd+1;
-			}
-			else
-				i++;
-		}
-	}
-
-	return res;
-}
-
-/**
-   Calculates information on the parameter at the specified index.
-
-   \param cmd The command to be analyzed
-   \param pos An index in the string which is inside the parameter
-   \param quote If not 0, store the type of quote this parameter has, can be either ', " or \\0, meaning the string is not quoted.
-   \param offset If not 0, get_param will store a pointer to the beginning of the parameter.
-   \param string If not 0, get_parm will store a copy of the parameter string as returned by the tokenizer.
-   \param type If not 0, get_param will store the token type as returned by tok_last.
-*/
-static void get_param( const wchar_t *cmd,
-					   const int pos,
-					   wchar_t *quote,
-					   const wchar_t **offset,
-					   wchar_t **string,
-					   int *type )
-{
-	int prev_pos=0;
-	wchar_t last_quote = '\0';
-	int unfinished;
-
-	tokenizer tok;
-	tok_init( &tok, cmd, TOK_ACCEPT_UNFINISHED | TOK_SQUASH_ERRORS );
-
-	for( ; tok_has_next( &tok ); tok_next( &tok ) )
-	{
-		if( tok_get_pos( &tok ) > pos )
-			break;
-
-		if( tok_last_type( &tok ) == TOK_STRING )
-			last_quote = get_quote( tok_last( &tok ),
-									pos - tok_get_pos( &tok ) );
-
-		if( type != 0 )
-			*type = tok_last_type( &tok );
-		if( string != 0 )
-			wcscpy( *string, tok_last( &tok ) );
-
-		prev_pos = tok_get_pos( &tok );
-	}
-
-	tok_destroy( &tok );
-    
-    wchar_t *cmd_tmp = wcsdup(cmd);
-	cmd_tmp[pos]=0;
-	int cmdlen = wcslen( cmd_tmp );
-	unfinished = (cmdlen==0);
-	if( !unfinished )
-	{
-		unfinished = (quote != 0);
-
-		if( !unfinished )
-		{
-			if( wcschr( L" \t\n\r", cmd_tmp[cmdlen-1] ) != 0 )
-			{
-				if( ( cmdlen == 1) || (cmd_tmp[cmdlen-2] != L'\\') )
-				{
-					unfinished=1;
-				}
-			}
-		}
-	}
-
-	if( quote )
-		*quote = last_quote;
-
-	if( offset != 0 )
-	{
-		if( !unfinished )
-		{
-			while( (cmd_tmp[prev_pos] != 0) && (wcschr( L";|",cmd_tmp[prev_pos])!= 0) )
-				prev_pos++;
-
-			*offset = cmd + prev_pos;
-		}
-		else
-		{
-			*offset = cmd + pos;
-		}
-	}
-}
 
 /**
    Insert the string in the given command line at the given cursor
@@ -990,36 +882,8 @@ static wcstring completion_apply_to_command_line(const wcstring &val_str, int fl
         wcstring replaced;
 		if( do_escape )
 		{
-			get_param(command_line.c_str(), cursor_pos, &quote, 0, 0, 0);
-			if( quote == L'\0' )
-			{
-				replaced = escape_string( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
-			}
-			else
-			{
-				bool unescapable = false;
-				for (const wchar_t *pin = val; *pin; pin++)
-				{
-					switch (*pin )
-					{
-						case L'\n':
-						case L'\t':
-						case L'\b':
-						case L'\r':
-							unescapable = true;
-							break;
-						default:
-							replaced.push_back(*pin);
-							break;
-					}
-				}
-                
-				if (unescapable)
-				{
-                    replaced = escape_string(val, ESCAPE_ALL | ESCAPE_NO_QUOTED);
-                    replaced.insert(0, &quote, 1);
-				}
-			}
+            parse_util_get_parameter_info(command_line, cursor_pos, &quote, NULL, NULL);
+            replaced = parse_util_escape_string_with_quote(val_str, quote);
 		}
 		else
 		{
@@ -1089,7 +953,7 @@ static void run_pager( const wcstring &prefix, int is_quoted, const std::vector<
 	{
 		prefix_esc = escape_string(prefix, 1);
 	}
-	
+    	
     wcstring cmd = format_string(L"fish_pager -c 3 -r 4 %ls -p %ls",
                                  // L"valgrind --track-fds=yes --log-file=pager.txt --leak-check=full ./fish_pager %d %ls",
                                 is_quoted?L"-q":L"",
@@ -1216,7 +1080,7 @@ struct autosuggestion_context_t {
     history_search_t searcher;
     file_detection_context_t detector;
     const wcstring working_directory;
-    const env_vars vars;
+    const env_vars_snapshot_t vars;
     wcstring_list_t commands_to_load;
     const unsigned int generation_count;
     
@@ -1229,7 +1093,7 @@ struct autosuggestion_context_t {
         searcher(*history, term, HISTORY_SEARCH_TYPE_PREFIX),
         detector(history, term),
         working_directory(get_working_directory()),
-        vars(env_vars::highlighting_keys),
+        vars(env_vars_snapshot_t::highlighting_keys),
         generation_count(s_generation_count),
         has_tried_reloading(false)
     {
@@ -1256,23 +1120,12 @@ struct autosuggestion_context_t {
             if (item.str().find('\n') != wcstring::npos)
                 continue;
             
-            bool item_ok = false;
-            if (autosuggest_special_validate_from_history(item.str(), working_directory, &item_ok)) {
+            if (autosuggest_validate_from_history(item, detector, working_directory, vars)) {
                 /* The command autosuggestion was handled specially, so we're done */
-            } else {
-                /* See if the item has any required paths */
-                const path_list_t &paths = item.get_required_paths();
-                if (paths.empty()) {
-                    item_ok = true;
-                } else {
-                    detector.potential_paths = paths;
-                    item_ok = detector.paths_are_valid(paths);
-                }
-            }
-            if (item_ok) {
                 this->autosuggestion = searcher.current_string();
                 return 1;
             }
+
         }
         
         /* Try handling a special command like cd */
@@ -1286,9 +1139,13 @@ struct autosuggestion_context_t {
         // If the line ends with a space, and the cursor is not at the end,
         // don't use completion autosuggestions. It ends up being pretty weird seeing stuff get spammed on the right
         // while you go back to edit a line
-        const bool line_ends_with_space = iswspace(search_string.at(search_string.size() - 1));
+        const wchar_t last_char = search_string.at(search_string.size() - 1);
         const bool cursor_at_end = (this->cursor_pos == search_string.size());
-        if (line_ends_with_space && ! cursor_at_end)
+        if (! cursor_at_end && iswspace(last_char))
+            return 0;
+
+        // On the other hand, if the line ends with a quote, don't go dumping stuff after the quote
+        if (wcschr(L"'\"", last_char) && cursor_at_end)
             return 0;
 
         /* Try normal completions */
@@ -1366,6 +1223,18 @@ static void update_autosuggestion(void) {
         iothread_perform(threaded_autosuggest, autosuggest_completed, ctx);
     }
 #endif
+}
+
+static void accept_autosuggestion(void) {
+    /* Accept any autosuggestion by replacing the command line with it. */
+    if (! data->autosuggestion.empty()) {
+        /* Accept the autosuggestion */
+        data->command_line = data->autosuggestion;
+        data->buff_pos = data->command_line.size();
+        data->command_line_changed();
+        reader_super_highlight_me_plenty(data->buff_pos);
+        reader_repaint();
+    }
 }
 
 /**
@@ -1598,35 +1467,29 @@ static int handle_completions( const std::vector<completion_t> &comp )
 		  There is no common prefix in the completions, and show_list
 		  is true, so we print the list
 		*/
-		int len;
+		size_t len, prefix_start = 0;
 		wcstring prefix;
-		const wchar_t * prefix_start;
-        const wchar_t *buff = data->command_line.c_str();
-		get_param( buff,
-				   data->buff_pos,
-				   0,
-				   &prefix_start,
-				   0,
-				   0 );
+		parse_util_get_parameter_info(data->command_line, data->buff_pos, NULL, &prefix_start, NULL);
 
-		len = &buff[data->buff_pos]-prefix_start+1;
+		assert(data->buff_pos >= prefix_start); 
+		len = data->buff_pos - prefix_start;
 
 		if( len <= PREFIX_MAX_LEN )
-		{
-            prefix.append(prefix_start, len);
+        {
+            prefix.append(data->command_line, prefix_start, len);
 		}
 		else
 		{
+            // append just the end of the string
             prefix = wcstring(&ellipsis_char, 1);
-            prefix.append(prefix_start + (len - PREFIX_MAX_LEN));
-		}
+			prefix.append(data->command_line, prefix_start + len - PREFIX_MAX_LEN, wcstring::npos);
+        }
 
 		{
 			int is_quoted;
 
 			wchar_t quote;
-            const wchar_t *buff = data->command_line.c_str();
-			get_param( buff, data->buff_pos, &quote, 0, 0, 0 );
+			parse_util_get_parameter_info(data->command_line, data->buff_pos, &quote, NULL, NULL);
 			is_quoted = (quote != L'\0');
 			
 			write_loop(1, "\n", 1 );
@@ -1776,6 +1639,19 @@ void reader_sanity_check()
 	}
 }
 
+/**
+   Set the specified string from the history as the current buffer. Do
+   not modify prefix_width.
+*/
+static void set_command_line_and_position( const wcstring &new_str, int pos )
+{
+    data->command_line = new_str;
+    data->command_line_changed();
+    data->buff_pos = pos;
+    reader_super_highlight_me_plenty( data->buff_pos );
+    reader_repaint();
+}
+
 void reader_replace_current_token( const wchar_t *new_token )
 {
 
@@ -1794,22 +1670,10 @@ void reader_replace_current_token( const wchar_t *new_token )
     new_buff.append(new_token);
     new_buff.append(end);
 	new_pos = (begin-buff) + wcslen(new_token);
-	reader_set_buffer(new_buff, new_pos);
+    
+    set_command_line_and_position(new_buff, new_pos);
 }
 
-
-/**
-   Set the specified string from the history as the current buffer. Do
-   not modify prefix_width.
-*/
-static void handle_history( const wcstring &new_str )
-{
-    data->command_line = new_str;
-    data->command_line_changed();
-    data->buff_pos=data->command_line.size();
-    reader_super_highlight_me_plenty( data->buff_pos );
-    reader_repaint();
-}
 
 /**
    Reset the data structures associated with the token search
@@ -1830,6 +1694,8 @@ static void reset_token_history()
 	data->search_pos=0;
     data->search_prev.clear();
     data->search_prev.push_back(data->search_buff);
+    
+    data->history_search = history_search_t(*data->history, data->search_buff, HISTORY_SEARCH_TYPE_CONTAINS);
 }
 
 
@@ -1939,7 +1805,7 @@ static void handle_token_history( int forward, int reset )
 							//debug( 3, L"ok pos" );
 
                             const wcstring last_tok = tok_last( &tok );
-                            if (find(data->search_prev.begin(), data->search_prev.end(), last_tok) != data->search_prev.end()) {
+                            if (find(data->search_prev.begin(), data->search_prev.end(), last_tok) == data->search_prev.end()) {
 								data->token_history_pos = tok_get_pos( &tok );
 								str = wcsdup(tok_last( &tok ));
 							}
@@ -2007,14 +1873,6 @@ static void move_word( int dir, int erase, int newv )
 			return;
 		
 		end_buff_pos--;
-	}
-	
-	/*
-	  When moving left, ignore the character under the cursor
-	*/
-	if( !dir )
-	{
-		end_buff_pos+=2*step;
 	}
 	
 	/*
@@ -2243,7 +2101,7 @@ int reader_shell_test( const wchar_t *b )
 		int tmp[1];
 		int tmp2[1];
 		
-		s_write( &data->screen, L"", L"", tmp, tmp2, 0 );
+		s_write( &data->screen, L"", L"", 0, tmp, tmp2, 0 );
 		
 		parser_t::principal_parser().test( b, 0, &sb, L"fish" );
 		fwprintf( stderr, L"%ls", sb.c_str() );
@@ -2263,9 +2121,7 @@ static int default_test( const wchar_t *b )
 
 void reader_push( const wchar_t *name )
 {
-    // use something nasty which guarantees value initialization (that is, all fields zero)
-    reader_data_t zerod = {};
-    reader_data_t *n = new reader_data_t(zerod);
+    reader_data_t *n = new reader_data_t();
     
     n->history = & history_t::history_with_name(name);
 	n->app_name = name;
@@ -2284,7 +2140,6 @@ void reader_push( const wchar_t *name )
 	reader_set_highlight_function( &highlight_universal );
 	reader_set_test_function( &default_test );
 	reader_set_prompt( L"" );
-	//history_set_mode( name );
 }
 
 void reader_pop()
@@ -2335,6 +2190,24 @@ void reader_set_test_function( int (*f)( const wchar_t * ) )
 	data->test_func = f;
 }
 
+void reader_import_history_if_necessary(void)
+{
+    /* Import history from bash, etc. if our current history is empty */
+    if (data->history && data->history->is_empty())
+    {
+        /* Try opening a bash file. We make an effort to respect $HISTFILE; this isn't very complete (AFAIK it doesn't have to be exported), and to really get this right we ought to ask bash itself. But this is better than nothing.
+        */
+        const env_var_t var = env_get_string(L"HISTFILE");
+        wcstring path = (var.missing() ? L"~/.bash_history" : var);
+        expand_tilde(path);
+        FILE *f = wfopen(path, "r");
+        if (f)
+        {
+            data->history->populate_from_bash(f);
+            fclose(f);
+        }
+    }
+}
 
 /** A class as the context pointer for a background (threaded) highlight operation. */
 class background_highlight_context_t {
@@ -2352,7 +2225,7 @@ public:
 	const highlight_function_t highlight_function;
     
     /** Environment variables */
-    const env_vars vars;
+    const env_vars_snapshot_t vars;
 
     /** When the request was made */
     const double when;
@@ -2364,7 +2237,7 @@ public:
         string_to_highlight(pbuff),
         match_highlight_pos(phighlight_pos),
         highlight_function(phighlight_func),
-        vars(env_vars::highlighting_keys),
+        vars(env_vars_snapshot_t::highlighting_keys),
         when(timef()),
         generation_count(s_generation_count)
     {
@@ -2376,18 +2249,9 @@ public:
             // The gen count has changed, so don't do anything
             return 0;
         }
-        const wchar_t *delayer = vars.get(L"HIGHLIGHT_DELAY");
-        double secDelay = 0;
-        if (delayer) {
-            wcstring tmp = delayer;
-            secDelay = from_string<double>(tmp);
-        }
-        if (secDelay > 0) usleep((useconds_t)(secDelay * 1E6));
-        //write(0, "Start", 5);
         if (! string_to_highlight.empty()) {
             highlight_function( string_to_highlight.c_str(), colors, match_highlight_pos, NULL /* error */, vars);
         }
-        //write(0, "End", 3);
         return 0;
     }
 };
@@ -2516,7 +2380,11 @@ static void handle_end_loop()
 	}
 	else
 	{
-		if( !isatty(0) )
+        /* PCA: we used to only hangup jobs if stdin was closed. This prevented child processes from exiting. It's unclear to my why it matters if stdin is closed, but it seems to me if we're forcing an exit, we definitely want to hang up our processes.
+        
+            See https://github.com/fish-shell/fish-shell/issues/138
+        */
+		if( reader_exit_forced() || !isatty(0) )
 		{
 			/*
 			  We already know that stdin is a tty since we're
@@ -2543,12 +2411,12 @@ static void handle_end_loop()
 */
 static int read_i()
 {
-	event_fire_generic(L"fish_prompt");
-	
 	reader_push(L"fish");
 	reader_set_complete_function( &complete );
 	reader_set_highlight_function( &highlight_shell );
 	reader_set_test_function( &reader_shell_test );
+    reader_import_history_if_necessary();
+    
 	parser_t &parser = parser_t::principal_parser();
     
 	data->prev_end_loop=0;
@@ -2557,6 +2425,7 @@ static int read_i()
 	{
 		const wchar_t *tmp;
 
+		event_fire_generic(L"fish_prompt");
 		if( function_exists( PROMPT_FUNCTION_NAME ) )
 			reader_set_prompt( PROMPT_FUNCTION_NAME );
 		else
@@ -3124,7 +2993,7 @@ const wchar_t *reader_readline()
                         } else {
                             new_text = data->history_search.current_string();
                         }
-						handle_history(new_text);
+						set_command_line_and_position(new_text, new_text.size());
 						
 						break;
 					}
@@ -3168,15 +3037,7 @@ const wchar_t *reader_readline()
 					data->buff_pos++;					
 					reader_repaint();
 				} else {
-                    /* We're at the end of our buffer, and the user hit right. Try autosuggestion. */
-                    if (! data->autosuggestion.empty()) {
-                        /* Accept the autosuggestion */
-                        data->command_line = data->autosuggestion;
-                        data->buff_pos = data->command_line.size();
-                        data->command_line_changed();
-                        reader_super_highlight_me_plenty(data->buff_pos);
-                        reader_repaint();
-                    }
+                    accept_autosuggestion();
                 }
 				break;
 			}
@@ -3211,7 +3072,13 @@ const wchar_t *reader_readline()
 
 			case R_BEGINNING_OF_HISTORY:
 			{
-				data->history_search.go_to_beginning();
+                data->history_search = history_search_t(*data->history, data->command_line, HISTORY_SEARCH_TYPE_PREFIX);
+                data->history_search.go_to_beginning();
+                if (! data->history_search.is_at_end()) {
+                    wcstring new_text = data->history_search.current_string();
+                    set_command_line_and_position(new_text, new_text.size());
+                }
+
 				break;
 			}
 
@@ -3260,7 +3127,20 @@ const wchar_t *reader_readline()
 								
 				break;
 			}
-			
+            
+			case R_SUPPRESS_AUTOSUGGESTION:
+			{
+				data->suppress_autosuggestion = true;
+				data->autosuggestion.clear();
+				reader_repaint();
+				break;
+			}
+            
+			case R_ACCEPT_AUTOSUGGESTION:
+			{
+				accept_autosuggestion();
+				break;
+			}
 
 			/* Other, if a normal character, we add it to the command */
 			default:
