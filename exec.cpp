@@ -251,9 +251,8 @@ static void safe_launch_process( process_t *p, const char *actual_cmd, char **ar
 	
 //	debug( 1, L"exec '%ls'", p->argv[0] );
 
-	execve ( wcs2str(p->actual_cmd.c_str()), 
-		 argv,
-		 envv );
+    // Wow, this wcs2str call totally allocates memory
+	execve ( actual_cmd, argv, envv );
 	
 	err = errno;
 	
@@ -1314,6 +1313,18 @@ void exec( parser_t &parser, job_t *j )
                 bool use_posix_spawn = true;
                 if (use_posix_spawn)
                 {
+                    posix_spawnattr_t attr = posix_spawnattr_t();
+                    posix_spawn_file_actions_t actions = posix_spawn_file_actions_t();
+                    bool made_it = fork_actions_make_spawn_stuff(&attr, &actions, j, p);
+                    if (made_it)
+                    {
+                        int spawn_ret = posix_spawn(&pid, actual_cmd, &actions, &attr, argv, envv);
+                        posix_spawn_file_actions_destroy(&actions);
+                        posix_spawnattr_destroy(&attr);
+                        
+                        if (spawn_ret != 0)
+                            pid = 0;
+                    }
                     //set_child_group
                     //handle_child_io
                     //signal_reset_handlers
