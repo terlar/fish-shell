@@ -502,3 +502,88 @@ bool fork_actions_make_spawn_stuff(posix_spawnattr_t *attr, posix_spawn_file_act
     
     return ! err;
 }
+
+void safe_report_exec_error(int err, const char *actual_cmd, char **argv, char **envv)
+{
+	debug_safe( 0, "Failed to execute process '%s'. Reason:", actual_cmd );
+	
+	switch( err )
+	{
+		
+		case E2BIG:
+		{
+			char sz1[128], sz2[128];
+			
+			long arg_max = -1;
+
+			size_t sz = 0;
+			char **p;
+			for(p=argv; *p; p++)
+			{
+				sz += strlen(*p)+1;
+			}
+			
+			for(p=envv; *p; p++)
+			{
+				sz += strlen(*p)+1;
+			}
+			
+            format_size_safe(sz1, sz);
+			arg_max = sysconf( _SC_ARG_MAX );
+			
+			if( arg_max > 0 )
+			{
+                format_size_safe(sz2, sz);
+                debug_safe(0, "The total size of the argument and environment lists %s exceeds the operating system limit of %s.", sz1, sz2);
+			}
+			else
+			{
+				debug_safe( 0, "The total size of the argument and environment lists (%s) exceeds the operating system limit.", sz1);
+			}
+			
+			debug_safe(0, "Try running the command again with fewer arguments.");
+			break;
+		}
+
+		case ENOEXEC:
+		{
+            /* Hope strerror doesn't allocate... */
+            const char *err = strerror(errno);
+            debug_safe(0, "exec: %s", err);
+			
+			debug_safe(0, "The file '%ls' is marked as an executable but could not be run by the operating system.", actual_cmd);
+            break;
+		}
+
+		case ENOENT:
+		{
+            char interpreter_buff[128] = {}, *interpreter;
+            interpreter = get_interpreter(actual_cmd, interpreter_buff, sizeof interpreter_buff);
+			if( interpreter && 0 != access( interpreter, X_OK ) )
+			{
+				debug_safe(0, "The file '%s' specified the interpreter '%s', which is not an executable command.", actual_cmd, interpreter );
+			}
+			else
+			{
+				debug_safe(0, "The file '%s' or a script or ELF interpreter does not exist, or a shared library needed for file or interpreter cannot be found.", actual_cmd);
+			}
+            break;
+		}
+
+		case ENOMEM:
+		{
+			debug_safe(0, "Out of memory");
+            break;
+		}
+
+		default:
+		{
+            /* Hope strerror doesn't allocate... */
+            const char *err = strerror(errno);
+            debug_safe(0, "exec: %s", err);
+			
+			//		debug(0, L"The file '%ls' is marked as an executable but could not be run by the operating system.", p->actual_cmd);
+            break;
+		}
+	}
+}

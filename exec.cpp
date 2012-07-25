@@ -209,7 +209,7 @@ void get_unused_internal_pipes(std::vector<int> &fds, const io_chain_t &io)
    Returns the interpreter for the specified script. Returns NULL if file
    is not a script with a shebang.
  */
-static char *get_interpreter( const char *command, char *interpreter, size_t buff_size )
+char *get_interpreter( const char *command, char *interpreter, size_t buff_size )
 {
     // OK to not use CLO_EXEC here because this is only called after fork
 	int fd = open( command, O_RDONLY );
@@ -286,88 +286,8 @@ static void safe_launch_process( process_t *p, const char *actual_cmd, char **ar
 	}
 	
 	errno = err;
-	debug_safe( 0, "Failed to execute process '%s'. Reason:", actual_cmd );
-	
-	switch( errno )
-	{
-		
-		case E2BIG:
-		{
-			char sz1[128], sz2[128];
-			
-			long arg_max = -1;
-
-			size_t sz = 0;
-			char **p;
-			for(p=argv; *p; p++)
-			{
-				sz += strlen(*p)+1;
-			}
-			
-			for(p=envv; *p; p++)
-			{
-				sz += strlen(*p)+1;
-			}
-			
-            format_size_safe(sz1, sz);
-			arg_max = sysconf( _SC_ARG_MAX );
-			
-			if( arg_max > 0 )
-			{
-                format_size_safe(sz2, sz);
-                debug_safe(0, "The total size of the argument and environment lists %s exceeds the operating system limit of %s.", sz1, sz2);
-			}
-			else
-			{
-				debug_safe( 0, "The total size of the argument and environment lists (%s) exceeds the operating system limit.", sz1);
-			}
-			
-			debug_safe(0, "Try running the command again with fewer arguments.");			
-			exit_without_destructors(STATUS_EXEC_FAIL);
-			break;
-		}
-
-		case ENOEXEC:
-		{
-            /* Hope strerror doesn't allocate... */
-            const char *err = strerror(errno);
-            debug_safe(0, "exec: %s", err);
-			
-			debug_safe(0, "The file '%ls' is marked as an executable but could not be run by the operating system.", actual_cmd);
-			exit_without_destructors(STATUS_EXEC_FAIL);
-		}
-
-		case ENOENT:
-		{
-            char interpreter_buff[128] = {}, *interpreter;
-            interpreter = get_interpreter(actual_cmd, interpreter_buff, sizeof interpreter_buff);
-			if( interpreter && 0 != access( interpreter, X_OK ) )
-			{
-				debug_safe(0, "The file '%s' specified the interpreter '%s', which is not an executable command.", actual_cmd, interpreter );
-			}
-			else
-			{
-				debug_safe(0, "The file '%s' or a script or ELF interpreter does not exist, or a shared library needed for file or interpreter cannot be found.", actual_cmd);
-			}
-			exit_without_destructors(STATUS_EXEC_FAIL);
-		}
-
-		case ENOMEM:
-		{
-			debug_safe(0, "Out of memory");
-			exit_without_destructors(STATUS_EXEC_FAIL);
-		}
-
-		default:
-		{
-            /* Hope strerror doesn't allocate... */
-            const char *err = strerror(errno);
-            debug_safe(0, "exec: %s", err);
-			
-			//		debug(0, L"The file '%ls' is marked as an executable but could not be run by the operating system.", p->actual_cmd);
-			exit_without_destructors(STATUS_EXEC_FAIL);
-		}
-	}
+    safe_report_exec_error(errno, actual_cmd, argv, envv);
+	exit_without_destructors(STATUS_EXEC_FAIL);
 }
 
 /**
@@ -1319,6 +1239,8 @@ void exec( parser_t &parser, job_t *j )
                     if (made_it)
                     {
                         int spawn_ret = posix_spawn(&pid, actual_cmd, &actions, &attr, argv, envv);
+                        if (spawn_ret != 0)
+                            safe_report_exec_error(spawn_ret, actual_cmd, argv, envv);
                         posix_spawn_file_actions_destroy(&actions);
                         posix_spawnattr_destroy(&attr);
                         
