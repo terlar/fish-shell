@@ -1692,7 +1692,7 @@ static int builtin_function( parser_t &parser, wchar_t **argv )
 				else
 				{
 					errno = 0;
-					pid = wcstol( woptarg, &end, 10 );
+					pid = fish_wcstoi( woptarg, &end, 10 );
 					if( errno || !end || *end )
 					{
 						append_format(stderr_buffer,
@@ -1808,7 +1808,7 @@ static int builtin_function( parser_t &parser, wchar_t **argv )
 	if( res )
 	{
 		size_t i;
-		int chars=0;
+		size_t chars=0;
 
 		builtin_print_help( parser, argv[0], stderr_buffer );
 		const wchar_t *cfa =  _( L"Current functions are: " );
@@ -1821,7 +1821,7 @@ static int builtin_function( parser_t &parser, wchar_t **argv )
 		for( i=0; i<names.size(); i++ )
 		{
 			const wchar_t *nxt = names.at(i).c_str();
-			int l = wcslen( nxt + 2 );
+			size_t l = wcslen( nxt + 2 );
 			if( chars+l > common_get_width() )
 			{
 				chars = 0;
@@ -1941,7 +1941,7 @@ static int builtin_random( parser_t &parser, wchar_t **argv )
 			}
 			lrand48_r( &seed_buffer, &res );
 			
-			append_format(stdout_buffer, L"%d\n", abs(res%32767) );
+			append_format(stdout_buffer, L"%ld\n", labs(res%32767) );
 			break;
 		}
 
@@ -2218,22 +2218,21 @@ static int builtin_read( parser_t &parser, wchar_t **argv )
 			while( !finished )
 			{
 				char b;
-				int read_res = read_blocked( builtin_stdin, &b, 1 );
-				if( read_res <= 0 )
+				if( read_blocked( builtin_stdin, &b, 1 ) <= 0 )
 				{
 					eof=1;
 					break;
 				}
 
-				int sz = mbrtowc( &res, &b, 1, &state );
+				size_t sz = mbrtowc( &res, &b, 1, &state );
 
 				switch( sz )
 				{
-					case -1:
+					case (size_t)(-1):
 						memset (&state, '\0', sizeof (state));
 						break;
 
-					case -2:
+					case (size_t)(-2):
 						break;
 					case 0:
 						eof=1;
@@ -2542,7 +2541,7 @@ static int builtin_exit( parser_t &parser, wchar_t **argv )
 {
 	int argc = builtin_count_args( argv );
 
-	int ec=0;
+	long ec=0;
 	switch( argc )
 	{
 		case 1:
@@ -2580,7 +2579,7 @@ static int builtin_exit( parser_t &parser, wchar_t **argv )
 		
 	}
 	reader_exit( 1, 0 );
-	return ec;
+	return (int)ec;
 }
 
 /**
@@ -2960,7 +2959,7 @@ static int builtin_fg( parser_t &parser, wchar_t **argv )
 		int found_job = 0;
 		
 		errno = 0;
-		pid = wcstol( argv[1], &endptr, 10 );
+		pid = fish_wcstoi( argv[1], &endptr, 10 );
 		if( !( *endptr || errno )  )
 		{			
 			j = job_get_from_pid( pid );
@@ -2992,7 +2991,7 @@ static int builtin_fg( parser_t &parser, wchar_t **argv )
 		wchar_t *end;		
 		int pid;
 		errno = 0;
-		pid = abs(wcstol( argv[1], &end, 10 ));
+		pid = abs(fish_wcstoi( argv[1], &end, 10 ));
 		
 		if( *end || errno )
 		{
@@ -3142,7 +3141,7 @@ static int builtin_bg( parser_t &parser, wchar_t **argv )
 		for( i=1; argv[i]; i++ )
 		{
 			errno=0;
-			pid = (int)wcstol( argv[i], &end, 10 );
+			pid = fish_wcstoi( argv[i], &end, 10 );
 			if( errno || pid < 0 || *end || !job_get_from_pid( pid ) )
 			{
 				append_format(stderr_buffer,
@@ -3158,7 +3157,7 @@ static int builtin_bg( parser_t &parser, wchar_t **argv )
 		{
 			for( i=1; !res && argv[i]; i++ )
 			{
-				pid = (int)wcstol( argv[i], 0, 10 );
+				pid = fish_wcstoi( argv[i], 0, 10 );
 				res |= send_to_bg( parser, job_get_from_pid( pid ), *argv);
 			}
 		}
@@ -3497,7 +3496,7 @@ static int builtin_return( parser_t &parser, wchar_t **argv )
 		{
 			wchar_t *end;
 			errno = 0;
-			status = wcstol(argv[1],&end,10);
+			status = fish_wcstoi(argv[1],&end,10);
 			if( errno || *end != 0)
 			{
 				append_format(stderr_buffer,
@@ -3639,15 +3638,12 @@ static int builtin_history( parser_t &parser, wchar_t **argv )
     bool save_history = false;
     bool clear_history = false;
 
-    wcstring delete_string;
-    wcstring search_string;
-
     static const struct woption long_options[] =
         {
-            { L"prefix", required_argument, 0, 'p' },
-            { L"delete", required_argument, 0, 'd' },
+            { L"prefix", no_argument, 0, 'p' },
+            { L"delete", no_argument, 0, 'd' },
             { L"search", no_argument, 0, 's' },
-            { L"contains", required_argument, 0, 'c' },
+            { L"contains", no_argument, 0, 'c' },
             { L"save", no_argument, 0, 'v' },
             { L"clear", no_argument, 0, 'l' },
             { L"help", no_argument, 0, 'h' },
@@ -3658,24 +3654,25 @@ static int builtin_history( parser_t &parser, wchar_t **argv )
     int opt_index = 0;
     woptind = 0;
     history_t *history = reader_get_history();
-
+    
+    /* Use the default history if we have none (which happens if invoked non-interactively, e.g. from webconfig.py */
+    if (! history)
+        history = &history_t::history_with_name(L"fish");
+    
     while((opt = wgetopt_long_only( argc, argv, L"pdscvl", long_options, &opt_index )) != -1)
     {
         switch(opt)
         {
            case 'p':
                 search_prefix = true;
-                search_string = woptarg;
                 break;
            case 'd':
                 delete_item = true;
-                delete_string = woptarg;
                 break;
            case 's':
                 search_history = true;
                 break;
            case 'c':
-                search_string = woptarg;
                 break;
            case 'v':
                 save_history = true;
@@ -3687,6 +3684,9 @@ static int builtin_history( parser_t &parser, wchar_t **argv )
                 builtin_print_help( parser, argv[0], stdout_buffer );
                 return STATUS_BUILTIN_OK;
                 break;
+           case EOF:
+                /* Remainder are arguments */
+                break;
            case '?':
                 append_format(stderr_buffer, BUILTIN_ERR_UNKNOWN, argv[0], argv[woptind-1]);
                 return STATUS_BUILTIN_ERROR;
@@ -3696,6 +3696,9 @@ static int builtin_history( parser_t &parser, wchar_t **argv )
                 return STATUS_BUILTIN_ERROR;
         }
     }	
+
+    /* Everything after is an argument */
+    const wcstring_list_t args(argv + woptind, argv + argc);
 
     if (argc == 1)
     {
@@ -3709,29 +3712,36 @@ static int builtin_history( parser_t &parser, wchar_t **argv )
     if (search_history)
     {
         int res = STATUS_BUILTIN_ERROR;
-
-        if (search_string.empty())
+        for (wcstring_list_t::const_iterator iter = args.begin(); iter != args.end(); ++iter)
         {
-            append_format(stderr_buffer, BUILTIN_ERR_COMBO2, argv[0], L"Use --search with either --contains or --prefix");
-            return res;
-        }
+            const wcstring &search_string = *iter;
+            if (search_string.empty())
+            {
+                append_format(stderr_buffer, BUILTIN_ERR_COMBO2, argv[0], L"Use --search with either --contains or --prefix");
+                return res;
+            }
 
-        history_search_t searcher = history_search_t(*history, search_string, search_prefix?HISTORY_SEARCH_TYPE_PREFIX:HISTORY_SEARCH_TYPE_CONTAINS);
-        while (searcher.go_backwards())
-        {
-            stdout_buffer.append(searcher.current_string());
-            stdout_buffer.append(L"\n"); 
-            res = STATUS_BUILTIN_OK;
+            history_search_t searcher = history_search_t(*history, search_string, search_prefix?HISTORY_SEARCH_TYPE_PREFIX:HISTORY_SEARCH_TYPE_CONTAINS);
+            while (searcher.go_backwards())
+            {
+                stdout_buffer.append(searcher.current_string());
+                stdout_buffer.append(L"\n"); 
+                res = STATUS_BUILTIN_OK;
+            }
         }
         return res;
     }
 
     if (delete_item)
     {
-        if (delete_string[0] == '"' && delete_string[delete_string.length() - 1] == '"')
-            delete_string = delete_string.substr(1, delete_string.length() - 2);
-       
-        history->remove(delete_string);
+        for (wcstring_list_t::const_iterator iter = args.begin(); iter != args.end(); ++iter)
+        {
+            wcstring delete_string = *iter;
+            if (delete_string[0] == '"' && delete_string[delete_string.length() - 1] == '"')
+                delete_string = delete_string.substr(1, delete_string.length() - 2);
+           
+            history->remove(delete_string);
+        }
         return STATUS_BUILTIN_OK;
     }
 

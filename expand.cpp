@@ -266,7 +266,7 @@ static int iswnumeric( const wchar_t *n )
 static bool match_pid( const wcstring &cmd,
 					   const wchar_t *proc,
 					   int flags,
-					   int *offset)
+					   size_t *offset)
 {
 	/* Test for a direct match. If the proc string is empty (e.g. the user tries to complete against %), then return an offset pointing at the base command. That ensures that you don't see a bunch of dumb paths when completing against all processes. */
 	if( proc[0] != L'\0' && wcsncmp( cmd.c_str(), proc, wcslen( proc ) ) == 0 )
@@ -489,7 +489,7 @@ bool process_iterator_t::next_process(wcstring *out_str, pid_t *out_pid)
 			continue;
         
         /* remember the pid */
-        pid = (long)wcstol(name.c_str(), NULL, 10);
+        pid = fish_wcstoi(name.c_str(), NULL, 10);
         
         /* the 'cmdline' file exists, it should contain the commandline */
         FILE *cmdfile;
@@ -562,133 +562,136 @@ std::vector<wcstring> expand_get_all_process_names(void)
 */
 
 static int find_process( const wchar_t *proc,
-						 int flags,
+						 expand_flags_t flags,
 						 std::vector<completion_t> &out )
 {
 	int found = 0;
+    
+    if (! (flags & EXPAND_SKIP_JOBS))
+    {
+        ASSERT_IS_MAIN_THREAD();
+        const job_t *j;
 
-	const job_t *j;
+        if( iswnumeric(proc) || (wcslen(proc)==0) )
+        {
+            /*
+              This is a numeric job string, like '%2'
+            */
 
-	if( iswnumeric(proc) || (wcslen(proc)==0) )
-	{
-		/*
-		  This is a numeric job string, like '%2'
-		*/
+            if( flags & ACCEPT_INCOMPLETE )
+            {
+                job_iterator_t jobs;
+                while ((j = jobs.next()))
+                {
+                    wchar_t jid[16];
+                    if( j->command_is_empty() )
+                        continue;
 
-		if( flags & ACCEPT_INCOMPLETE )
-		{
-            job_iterator_t jobs;
-            while ((j = jobs.next()))
-			{
-				wchar_t jid[16];
-				if( j->command_is_empty() )
-					continue;
+                    swprintf( jid, 16, L"%d", j->job_id );
 
-				swprintf( jid, 16, L"%d", j->job_id );
+                    if( wcsncmp( proc, jid, wcslen(proc ) )==0 )
+                    {
+                        wcstring desc_buff = format_string(COMPLETE_JOB_DESC_VAL, j->command_wcstr());
+                        append_completion( out, 
+                                             jid+wcslen(proc),
+                                             desc_buff,
+                                             0 );
+                    }
+                }
 
-				if( wcsncmp( proc, jid, wcslen(proc ) )==0 )
-				{
-                    wcstring desc_buff = format_string(COMPLETE_JOB_DESC_VAL, j->command_wcstr());
-					append_completion( out, 
-										 jid+wcslen(proc),
-										 desc_buff,
-										 0 );
-				}
-			}
+            }
+            else
+            {
 
-		}
-		else
-		{
+                int jid;
+                wchar_t *end;
+                
+                errno = 0;
+                jid = fish_wcstoi( proc, &end, 10 );
+                if( jid > 0 && !errno && !*end )
+                {
+                    j = job_get( jid );
+                    if( (j != 0) && (j->command_wcstr() != 0 ) )
+                    {
+                        {
+                            append_completion(out, to_string<long>(j->pgid));
+                            found = 1;
+                        }
+                    }
+                }
+            }
+        }
+        if( found )
+            return 1;
 
-			int jid;
-			wchar_t *end;
-			
-			errno = 0;
-			jid = wcstol( proc, &end, 10 );
-			if( jid > 0 && !errno && !*end )
-			{
-				j = job_get( jid );
-				if( (j != 0) && (j->command_wcstr() != 0 ) )
-				{
-					{
-                        append_completion(out, to_string<long>(j->pgid));
-						found = 1;
-					}
-				}
-			}
-		}
-	}
-	if( found )
-		return 1;
+        job_iterator_t jobs;
+        while ((j = jobs.next()))
+        {
+            
+            if( j->command_is_empty() )
+                continue;
+        
+            size_t offset;
+            if( match_pid( j->command(), proc, flags, &offset ) )
+            {
+                if( flags & ACCEPT_INCOMPLETE )
+                {
+                    append_completion( out, 
+                                         j->command_wcstr() + offset + wcslen(proc),
+                                         COMPLETE_JOB_DESC,
+                                         0 );
+                }
+                else
+                {
+                    append_completion(out, to_string<long>(j->pgid));
+                    found = 1;
+                }
+            }
+        }
 
-    job_iterator_t jobs;
-    while ((j = jobs.next()))
-	{
-		int offset;
-		
-		if( j->command_is_empty() )
-			continue;
-		
-		if( match_pid( j->command(), proc, flags, &offset ) )
-		{
-			if( flags & ACCEPT_INCOMPLETE )
-			{
-				append_completion( out, 
-									 j->command_wcstr() + offset + wcslen(proc),
-									 COMPLETE_JOB_DESC,
-									 0 );
-			}
-			else
-			{
-                append_completion(out, to_string<long>(j->pgid));
-				found = 1;
-			}
-		}
-	}
+        if( found )
+        {
+            return 1;
+        }
 
-	if( found )
-	{
-		return 1;
-	}
+        jobs.reset();
+        while ((j = jobs.next()))
+        {
+            process_t *p;
+            if( j->command_is_empty() )
+                continue;
+            for( p=j->first_process; p; p=p->next )
+            {
+                if( p->actual_cmd.empty() )
+                    continue;
+                    
+                size_t offset;
+                if( match_pid( p->actual_cmd, proc, flags, &offset ) )
+                {
+                    if( flags & ACCEPT_INCOMPLETE )
+                    {
+                        append_completion( out, 
+                                             wcstring(p->actual_cmd, offset + wcslen(proc)),
+                                             COMPLETE_CHILD_PROCESS_DESC,
+                                             0 );
+                    }
+                    else
+                    {
+                        append_completion (out,
+                                             to_string<long>(p->pid),
+                                             L"",
+                                             0);
+                        found = 1;
+                    }
+                }
+            }
+        }
 
-    jobs.reset();
-    while ((j = jobs.next()))
-	{
-		process_t *p;
-		if( j->command_is_empty() )
-			continue;
-		for( p=j->first_process; p; p=p->next )
-		{
-			int offset;
-			
-			if( p->actual_cmd.empty() )
-				continue;
-
-			if( match_pid( p->actual_cmd, proc, flags, &offset ) )
-			{
-				if( flags & ACCEPT_INCOMPLETE )
-				{
-					append_completion( out, 
-										 wcstring(p->actual_cmd, offset + wcslen(proc)),
-										 COMPLETE_CHILD_PROCESS_DESC,
-										 0 );
-				}
-				else
-				{
-                    append_completion (out,
-                                         to_string<long>(p->pid),
-                                         L"",
-                                         0);
-					found = 1;
-				}
-			}
-		}
-	}
-
-	if( found )
-	{
-		return 1;
-	}
+        if( found )
+        {
+            return 1;
+        }
+    }
 
     /* Iterate over all processes */
     wcstring process_name;
@@ -696,8 +699,7 @@ static int find_process( const wchar_t *proc,
     process_iterator_t iterator;
     while (iterator.next_process(&process_name, &process_pid))
     {
-        int offset;
-        
+        size_t offset;
         if( match_pid( process_name, proc, flags, &offset ) )
         {
             if( flags & ACCEPT_INCOMPLETE )
@@ -721,7 +723,7 @@ static int find_process( const wchar_t *proc,
    Process id expansion
 */
 static int expand_pid( const wcstring &instr_with_sep,
-					   int flags,
+					   expand_flags_t flags,
 					   std::vector<completion_t> &out )
 {
  
@@ -790,9 +792,9 @@ static int expand_pid( const wcstring &instr_with_sep,
 }
 
 
-void expand_variable_error( parser_t &parser, const wchar_t *token, int token_pos, int error_pos )
+void expand_variable_error( parser_t &parser, const wchar_t *token, size_t token_pos, int error_pos )
 {
-	int stop_pos = token_pos+1;
+	size_t stop_pos = token_pos+1;
 	
 	switch( token[stop_pos] )
 	{
@@ -875,11 +877,12 @@ void expand_variable_error( parser_t &parser, const wchar_t *token, int token_po
 /**
    Parse an array slicing specification
  */
-static int parse_slice( const wchar_t *in, wchar_t **end_ptr, std::vector<long> &idx, int size )
+static int parse_slice( const wchar_t *in, wchar_t **end_ptr, std::vector<long> &idx, size_t array_size )
 {
 	wchar_t *end;
 	
-	int pos = 1;
+    const long size = (long)array_size;
+	size_t pos = 1; //skip past the opening square bracket
     
     //	debug( 0, L"parse_slice on '%ls'", in );
 	
@@ -904,7 +907,7 @@ static int parse_slice( const wchar_t *in, wchar_t **end_ptr, std::vector<long> 
 		}
         //		debug( 0, L"Push idx %d", tmp );
 		
-		long i1 = tmp>-1 ? tmp : size+tmp+1;
+		long i1 = tmp>-1 ? tmp : (long)array_size+tmp+1;
 		pos = end-in;
 		while( in[pos]==INTERNAL_SEPARATOR )
 			pos++;		
@@ -961,16 +964,16 @@ static int parse_slice( const wchar_t *in, wchar_t **end_ptr, std::vector<long> 
    happens, don't edit it unless you know exactly what you are doing,
    and do proper testing afterwards.
 */
-static int expand_variables_internal( parser_t &parser, wchar_t * const in, std::vector<completion_t> &out, int last_idx );
+static int expand_variables_internal( parser_t &parser, wchar_t * const in, std::vector<completion_t> &out, long last_idx );
 
-static int expand_variables2( parser_t &parser, const wcstring &instr, std::vector<completion_t> &out, int last_idx ) {
+static int expand_variables2( parser_t &parser, const wcstring &instr, std::vector<completion_t> &out, long last_idx ) {
     wchar_t *in = wcsdup(instr.c_str());
     int result = expand_variables_internal(parser, in, out, last_idx);
     free(in);
     return result;
 }
 
-static int expand_variables_internal( parser_t &parser, wchar_t * const in, std::vector<completion_t> &out, int last_idx )
+static int expand_variables_internal( parser_t &parser, wchar_t * const in, std::vector<completion_t> &out, long last_idx )
 {
 	int is_ok= 1;
 	int empty=0;
@@ -980,14 +983,14 @@ static int expand_variables_internal( parser_t &parser, wchar_t * const in, std:
     
     //	CHECK( out, 0 );
 	
-	for( int i=last_idx; (i>=0) && is_ok && !empty; i-- )
+	for( long i=last_idx; (i>=0) && is_ok && !empty; i-- )
 	{
 		const wchar_t c = in[i];
 		if( ( c == VARIABLE_EXPAND ) || (c == VARIABLE_EXPAND_SINGLE ) )
 		{
-			int start_pos = i+1;
-			int stop_pos;
-			int var_len;
+			long start_pos = i+1;
+			long stop_pos;
+			long var_len;
 			int is_single = (c==VARIABLE_EXPAND_SINGLE);
 			
 			stop_pos = start_pos;
@@ -1177,20 +1180,19 @@ static int expand_variables_internal( parser_t &parser, wchar_t * const in, std:
 /**
    Perform bracket expansion
 */
-static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::vector<completion_t> &out )
+static int expand_brackets(parser_t &parser, const wcstring &instr, int flags, std::vector<completion_t> &out )
 {
 	const wchar_t *pos;
-	int syntax_error=0;
+	bool syntax_error = false;
 	int bracket_count=0;
 
 	const wchar_t *bracket_begin=0, *bracket_end=0;
 	const wchar_t *last_sep=0;
 
 	const wchar_t *item_begin;
-	int len1, len2, tot_len;
-
-	CHECK( in, 0 );
-//	CHECK( out, 0 );
+	size_t len1, len2, tot_len;
+    
+    const wchar_t * const in = instr.c_str();
 	
 	for( pos=in;
 		 (*pos) && !syntax_error;
@@ -1216,7 +1218,7 @@ static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::
 				
 				if( bracket_count < 0 )
 				{
-					syntax_error = 1;
+					syntax_error = true;
 				}
 				break;
 			}
@@ -1232,7 +1234,7 @@ static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::
 	{
 		if( !(flags & ACCEPT_INCOMPLETE) )
 		{
-			syntax_error = 1;
+			syntax_error = true;
 		}
 		else
 		{
@@ -1249,7 +1251,7 @@ static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::
                 mod.push_back(BRACKET_END);
 			}
 
-			return expand_brackets( parser, mod.c_str(), 1, out );
+			return expand_brackets( parser, mod, 1, out );
 		}
 	}
 
@@ -1277,16 +1279,16 @@ static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::
 		{
 			if( (*pos == BRACKET_SEP) || (pos==bracket_end) )
 			{
-				wchar_t *whole_item;
-				int item_len = pos-item_begin;
-
-				whole_item = (wchar_t *)malloc( sizeof(wchar_t)*(tot_len + item_len + 1) );
-				wcslcpy( whole_item, in, len1+1 );
-				wcslcpy( whole_item+len1, item_begin, item_len+1 );
-				wcscpy( whole_item+len1+item_len, bracket_end+1 );
-
-				expand_brackets( parser, whole_item, flags, out );
-
+                assert(pos >= item_begin);
+				size_t item_len = pos-item_begin;
+                
+                wcstring whole_item;
+                whole_item.reserve(tot_len + item_len + 2);
+                whole_item.append(in, len1);
+                whole_item.append(item_begin, item_len);
+                whole_item.append(bracket_end + 1);
+                expand_brackets( parser, whole_item, flags, out );
+                
 				item_begin = pos+1;
 				if( pos == bracket_end )
 					break;
@@ -1312,7 +1314,6 @@ static int expand_brackets(parser_t &parser, const wchar_t *in, int flags, std::
 static int expand_cmdsubst( parser_t &parser, const wcstring &input, std::vector<completion_t> &outList )
 {
 	wchar_t *paran_begin=0, *paran_end=0;
-	int len1;
     std::vector<wcstring> sub_res;
 	size_t i, j;
 	wchar_t *tail_begin = 0;	
@@ -1337,9 +1338,7 @@ static int expand_cmdsubst( parser_t &parser, const wcstring &input, std::vector
             
 			break;
 	}
-    
-	len1 = (paran_begin-in);
-    
+        
     const wcstring subcmd(paran_begin + 1, paran_end-paran_begin - 1);
     
 	if( exec_subshell( subcmd, sub_res) == -1 )
@@ -1409,7 +1408,7 @@ static int expand_cmdsubst( parser_t &parser, const wcstring &input, std::vector
             wcstring tail_item = tail_expand.at(j).completion;
             
             //sb_append_substring( &whole_item, in, len1 );
-            whole_item.append(in, len1);
+            whole_item.append(in, paran_begin-in);
             
             //sb_append_char( &whole_item, INTERNAL_SEPARATOR );
             whole_item.push_back(INTERNAL_SEPARATOR);
@@ -1618,7 +1617,7 @@ int expand_string( const wcstring &input, std::vector<completion_t> &output, exp
     {
         wcstring next = in->at(i).completion;
         
-        if( !expand_brackets( parser, next.c_str(), flags, *out ))
+        if( !expand_brackets( parser, next, flags, *out ))
         {
             return EXPAND_ERROR;
         }

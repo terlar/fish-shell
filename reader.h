@@ -100,15 +100,16 @@ history_t *reader_get_history(void);
    Set the string of characters in the command buffer, as well as the cursor position.
 
    \param b the new buffer value
-   \param p the cursor position. If \c p is less than zero, the cursor is placed on the last character.
+   \param p the cursor position. If \c p is larger than the length of the command line,
+            the cursor is placed on the last character.
 */
-void reader_set_buffer( const wcstring &b, int p );
+void reader_set_buffer( const wcstring &b, size_t p );
 
 /**
    Get the current cursor position in the command line. If interactive
-   mode is uninitialized, return -1.
+   mode is uninitialized, return (size_t)(-1).
 */
-int reader_get_cursor_pos();
+size_t reader_get_cursor_pos();
 
 /**
    Return the value of the interrupted flag, which is set by the sigint
@@ -146,7 +147,7 @@ void reader_set_complete_function( complete_function_t );
  The type of a highlight function.
  */
 class env_vars_snapshot_t;
-typedef void (*highlight_function_t)( const wcstring &, std::vector<int> &, int, wcstring_list_t *, const env_vars_snapshot_t &vars );
+typedef void (*highlight_function_t)( const wcstring &, std::vector<int> &, size_t, wcstring_list_t *, const env_vars_snapshot_t &vars );
 
 /**
  Specify function for syntax highlighting. The function must take these arguments:
