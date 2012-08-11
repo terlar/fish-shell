@@ -328,7 +328,7 @@ class job_t
         pgid(0),
         tmodes(),
         job_id(jobid),
-        io(NULL),
+        io(),
         flags(0)
     {
     }

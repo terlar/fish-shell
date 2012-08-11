@@ -12,6 +12,7 @@ Utilities for io redirection.
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <set>
 
 #ifdef HAVE_SYS_TERMIOS_H
 #include <sys/termios.h>
@@ -98,13 +99,13 @@ void io_buffer_read( io_data_t *d )
 }
 
 
-io_data_t *io_buffer_create( int is_input )
+io_data_t *io_buffer_create( bool is_input )
 {
     bool success = true;
 	io_data_t *buffer_redirect = new io_data_t;
 	buffer_redirect->out_buffer_create();
-	buffer_redirect->io_mode=IO_BUFFER;
-	buffer_redirect->is_input = is_input;
+	buffer_redirect->io_mode = IO_BUFFER;
+	buffer_redirect->is_input = is_input ? true : false;
 	buffer_redirect->fd=is_input?0:1;
 	
 	if( exec_pipe( buffer_redirect->param1.pipe_fd ) == -1 )
@@ -152,20 +153,20 @@ void io_buffer_destroy( io_data_t *io_buffer )
 	delete io_buffer;
 }
 
-void io_remove(io_chain_t &list, const io_data_t *element)
+void io_chain_t::remove(const io_data_t *element)
 {
-    io_chain_t::iterator where = find(list.begin(), list.end(), element);
-    if (where != list.end())
+    io_chain_t::iterator where = find(this->begin(), this->end(), element);
+    if (where != this->end())
     {
-        list.erase(where);
+        this->erase(where);
     }
 }
 
-io_chain_t io_duplicate(const io_chain_t &chain)
+io_chain_t io_chain_t::duplicate() const
 {
     io_chain_t result;
-    result.reserve(chain.size());
-    for (io_chain_t::const_iterator iter = chain.begin(); iter != chain.end(); iter++)
+    result.reserve(this->size());
+    for (io_chain_t::const_iterator iter = this->begin(); iter != this->end(); iter++)
     {
         const io_data_t *io = *iter;
         result.push_back(new io_data_t(*io));
@@ -173,51 +174,143 @@ io_chain_t io_duplicate(const io_chain_t &chain)
     return result;
 }
 
+void io_chain_t::duplicate_append(const io_chain_t &src)
+{
+    this->reserve(this->size() + src.size());
+    for (size_t idx = 0; idx < src.size(); idx++)
+    {
+        const io_data_t *src_data = src.at(idx);
+        this->push_back(new io_data_t(*src_data));
+    }
+}
+
+io_chain_t io_chain_t::unique() const
+{
+    /* Walk our chain backwards. The first time we encounter each fd, append the resulting io_data to the end of the result array. Lastly, reverse the result array. */
+    io_chain_t result;
+    std::set<int> used_fds;
+    for (size_t idx = 0; idx < this->size(); idx++)
+    {
+        io_data_t *data = this->at(idx);
+        if (used_fds.insert(data->fd).second)
+        {
+            /* First ("last") use of this fd */
+            result.push_back(data);
+        }
+    }
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+void io_chain_t::destroy()
+{
+    for (size_t idx = 0; idx < this->size(); idx++)
+    {
+        delete this->at(idx);
+    }
+    this->clear();
+}
+
+void io_remove(io_chain_t &list, const io_data_t *element)
+{
+    list.remove(element);
+}
+
+io_chain_t io_duplicate(const io_chain_t &chain)
+{
+    return chain.duplicate();
+}
+
+io_chain_t io_unique(const io_chain_t &chain)
+{
+    return chain.unique();
+}
+
+void io_chain_debug(const io_chain_t &chain)
+{
+    if (chain.empty())
+    {
+        fprintf(stderr, "Empty chain %p\n", &chain);
+        return;
+    }
+    
+    fprintf(stderr, "Chain %p (%ld items):\n", &chain, (long)chain.size());
+    for (size_t i=0; i < chain.size(); i++) {
+        const io_data_t *io = chain.at(i);
+        fprintf(stderr, "\t%lu: fd:%d, input:%s, ", (unsigned long)i, io->fd, io->is_input ? "yes" : "no");
+        switch (io->io_mode)
+        {
+            case IO_FILE:
+                fprintf(stderr, "file (%s)\n", io->filename_cstr);
+                break;
+            case IO_PIPE:
+                fprintf(stderr, "pipe {%d, %d}\n", io->param1.pipe_fd[0], io->param1.pipe_fd[1]);
+                break;
+            case IO_FD:
+                fprintf(stderr, "FD map %d -> %d\n", io->param1.old_fd, io->fd);
+                break;
+            case IO_BUFFER:
+                fprintf(stderr, "buffer %p (size %lu)\n", io->out_buffer_ptr(), io->out_buffer_size());
+                break;
+            case IO_CLOSE:
+                fprintf(stderr, "close %d\n", io->fd);
+                break;
+        }
+    }
+}
+
 void io_duplicate_append( const io_chain_t &src, io_chain_t &dst )
 {
-    dst.reserve(dst.size() + src.size());
-    for (io_chain_t::const_iterator iter = src.begin(); iter != src.end(); iter++) {
-        const io_data_t *src_data = *iter;
-        dst.push_back(new io_data_t(*src_data));
-    }
+    return dst.duplicate_append(src);
 }
 
 void io_chain_destroy(io_chain_t &chain) 
 {
-    for (io_chain_t::iterator iter = chain.begin(); iter != chain.end(); iter++) {
-        delete *iter;
+    chain.destroy();
+}
+
+/* Return the last IO for the given fd */
+const io_data_t *io_chain_t::get_io_for_fd(int fd) const
+{
+    size_t idx = this->size();
+    while (idx--)
+    {
+        const io_data_t *data = this->at(idx);
+        if (data->fd == fd) {
+            return data;
+        }
     }
-    chain.clear();
+    return NULL;
+}
+
+io_data_t *io_chain_t::get_io_for_fd(int fd)
+{
+    size_t idx = this->size();
+    while (idx--)
+    {
+        io_data_t *data = this->at(idx);
+        if (data->fd == fd) {
+            return data;
+        }
+    }
+    return NULL;
 }
 
 /* The old function returned the last match, so we mimic that. */
 const io_data_t *io_chain_get(const io_chain_t &src, int fd) {
-    for (io_chain_t::const_reverse_iterator iter = src.rbegin(); iter != src.rend(); iter++) {
-        const io_data_t *data = *iter;
-        if (data->fd == fd) {
-            return data;
-        }
-    }
-    return NULL;
+    return src.get_io_for_fd(fd);
 }
 
 io_data_t *io_chain_get(io_chain_t &src, int fd) {
-    for (io_chain_t::reverse_iterator iter = src.rbegin(); iter != src.rend(); iter++) {
-        io_data_t *data = *iter;
-        if (data->fd == fd) {
-            return data;
-        }
-    }
-    return NULL;
+    return src.get_io_for_fd(fd);
 }
 
 
 void io_print( const io_chain_t &chain )
 {
-    
-    for (io_chain_t::const_iterator iter = chain.begin(); iter != chain.end(); iter++) 
+    for (size_t idx = 0; idx < chain.size(); idx++)
     {
-        const io_data_t *io = *iter;
+        const io_data_t *io = chain.at(idx);
         debug( 1, L"IO fd %d, type ", io->fd );
         switch( io->io_mode )
         {
@@ -237,4 +330,14 @@ void io_print( const io_chain_t &chain )
                 debug( 1, L"OTHER" );
         }
     }
+}
+
+io_chain_t::io_chain_t(io_data_t *data) : std::vector<io_data_t *>(1, data)
+{
+    
+}
+
+io_chain_t::io_chain_t() : std::vector<io_data_t *>()
+{
+
 }

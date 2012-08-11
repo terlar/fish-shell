@@ -45,6 +45,7 @@ int set_child_group( job_t *j, process_t *p, int print_errors );
 
    \param j the job to set up the IO for
    \param p the child process to set up
+   \param io_chain the IO chain to use (ignores the job's iochain)
 
    \return 0 on sucess, -1 on failiure. When this function returns,
    signals are always unblocked. On failiure, signal handlers, io
@@ -57,7 +58,7 @@ int setup_child_process( job_t *j, process_t *p );
 pid_t execute_fork(bool wait_for_threads_to_die);
 
 /* Initializes and fills in a posix_spawnattr_t; on success, the caller should destroy it via posix_spawnattr_destroy */
-bool fork_actions_make_spawn_stuff(posix_spawnattr_t *attr, posix_spawn_file_actions_t *actions, job_t *j, process_t *p);
+bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_file_actions_t *actions, job_t *j, process_t *p);
 
 /** Report an error from failing to exec or posix_spawn a command */
 void safe_report_exec_error(int err, const char *actual_cmd, char **argv, char **envv);

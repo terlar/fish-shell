@@ -157,7 +157,7 @@ static bool use_fd_in_pipe(int fd, const io_chain_t &io_chain )
 {
     for (size_t idx = 0; idx < io_chain.size(); idx++)
     {
-        const io_data_t *io = io_chain[idx];
+        const io_data_t *io = io_chain.at(idx);
         if( ( io->io_mode == IO_BUFFER ) || 
             ( io->io_mode == IO_PIPE ) )
         {
@@ -330,11 +330,7 @@ static void io_cleanup_chains(io_chain_t &chains, const std::vector<int> &opened
     }
     
     /* Then delete all of the redirections we made */
-    for (io_chain_t::iterator iter = chains.begin(); iter != chains.end(); iter++) {
-        delete *iter;
-    }
-    chains.clear();
-
+    chains.destroy();
 }
 
 /**
@@ -362,10 +358,10 @@ static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, s
     
     /* In the event we can't finish transmorgrifying, we'll have to close all the files we opened. */
     std::vector<int> opened_fds;
-                
-    for (io_chain_t::const_iterator iter = in_chain.begin(); iter != in_chain.end(); iter++) {
     
-        io_data_t *in = *iter;
+    for (size_t idx = 0; idx < in_chain.size(); idx++)
+    {
+        io_data_t *in = in_chain.at(idx);
         io_data_t *out = NULL; //gets allocated via new
                 
         switch( in->io_mode )
@@ -545,9 +541,9 @@ void exec( parser_t &parser, job_t *j )
 	}
 
 	const io_data_t *input_redirect = NULL;
-    for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    for (size_t idx = 0; idx < j->io.size(); idx++)
 	{
-        input_redirect = *iter;
+        input_redirect = j->io.at(idx);
         
 		if( (input_redirect->io_mode == IO_BUFFER) && 
 			input_redirect->is_input )
@@ -1174,7 +1170,7 @@ void exec( parser_t &parser, job_t *j )
                 fflush(stderr);
                 if (g_log_forks) {
                     printf("fork #%d: Executing fork for internal builtin for '%ls'\n", g_fork_count, p->argv0());
-                    io_print(io_chain_t(1, io));
+                    io_print(io_chain_t(io));
                 }
 				pid = execute_fork(false);
 				if( pid == 0 )
@@ -1231,13 +1227,16 @@ void exec( parser_t &parser, job_t *j )
                     printf("fork #%d: forking for '%s' in '%ls:%ls'\n", g_fork_count, actual_cmd, file ? file : L"", func ? func : L"?");
                 }
                 
+                fprintf(stderr, "IO chain for %s:\n", actual_cmd);
+                io_chain_debug(j->io);
+                
                 /* Prefer to use posix_spawn, since it's faster on some systems */
                 bool use_posix_spawn = true;
                 if (use_posix_spawn)
                 {
                     posix_spawnattr_t attr = posix_spawnattr_t();
                     posix_spawn_file_actions_t actions = posix_spawn_file_actions_t();
-                    bool made_it = fork_actions_make_spawn_stuff(&attr, &actions, j, p);
+                    bool made_it = fork_actions_make_spawn_properties(&attr, &actions, j, p);
                     if (made_it)
                     {
                         int spawn_ret = posix_spawn(&pid, actual_cmd, &actions, &attr, argv, envv);
@@ -1384,7 +1383,7 @@ static int exec_subshell_internal( const wcstring &cmd, wcstring_list_t *lst )
 	prev_status = proc_get_last_status();
 	
     parser_t &parser = parser_t::principal_parser();
-	if( parser.eval( cmd, io_chain_t(1, io_buffer), SUBST ) )
+	if( parser.eval( cmd, io_chain_t(io_buffer), SUBST ) )
 	{
 		status = -1;
 	}
