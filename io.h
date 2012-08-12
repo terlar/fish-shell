@@ -117,7 +117,7 @@ public:
     }
 };
 
-class io_chain_t : private std::vector<io_data_t *> {
+class io_chain_t : public std::vector<io_data_t *> {
 public:
     io_chain_t();
     io_chain_t(io_data_t *);
@@ -126,23 +126,6 @@ public:
     io_chain_t duplicate() const;
     void duplicate_append(const io_chain_t &src);
     void destroy();
-    
-    size_t size() const { return std::vector<io_data_t *>::size(); }
-    io_data_t *at(size_t idx) const { return std::vector<io_data_t *>::at(idx); }
-        
-    bool empty() const { return std::vector<io_data_t *>::empty(); }
-    
-    void push_back(io_data_t *v) { std::vector<io_data_t *>::push_back(v); }
-    void swap(io_chain_t &other) { std::vector<io_data_t *>::swap(other); }
-    
-    typedef std::vector<io_data_t *>::iterator iterator;
-    typedef std::vector<io_data_t *>::const_iterator const_iterator;
-    iterator begin() { return std::vector<io_data_t *>::begin(); }
-    iterator end() { return std::vector<io_data_t *>::end(); }
-    const_iterator begin() const { return std::vector<io_data_t *>::begin(); }
-    const_iterator end() const { return std::vector<io_data_t *>::end(); }
-
-    void erase(iterator where) { std::vector<io_data_t *>::erase(where); }
     
     const io_data_t *get_io_for_fd(int fd) const;
     io_data_t *get_io_for_fd(int fd);

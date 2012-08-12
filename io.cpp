@@ -279,20 +279,21 @@ io_data_t *io_chain_t::get_io_for_fd(int fd)
 }
 
 /* The old function returned the last match, so we mimic that. */
-const io_data_t *io_chain_get(const io_chain_t &src, int fd) {
+const io_data_t *io_chain_get(const io_chain_t &src, int fd)
+{
     return src.get_io_for_fd(fd);
 }
 
-io_data_t *io_chain_get(io_chain_t &src, int fd) {
+io_data_t *io_chain_get(io_chain_t &src, int fd)
+{
     return src.get_io_for_fd(fd);
 }
 
 io_chain_t::io_chain_t(io_data_t *data) : std::vector<io_data_t *>(1, data)
 {
-    
+
 }
 
 io_chain_t::io_chain_t() : std::vector<io_data_t *>()
 {
-
 }
