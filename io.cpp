@@ -154,10 +154,14 @@ void io_buffer_destroy( io_data_t *io_buffer )
 
 void io_remove(io_chain_t &list, const io_data_t *element)
 {
-    io_chain_t::iterator where = find(list.begin(), list.end(), element);
-    if (where != list.end())
+    // See if you can guess why std::find doesn't work here
+    for (io_chain_t::iterator iter = list.begin(); iter != list.end(); ++iter)
     {
-        list.erase(where);
+        if (*iter == element)
+        {
+            list.erase(iter);
+            break;
+        }
     }
 }
 
