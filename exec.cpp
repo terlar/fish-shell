@@ -379,11 +379,12 @@ static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, s
             case IO_FD:
             case IO_BUFFER:
             case IO_CLOSE:
+            case IO_FILE:
             {
                 out = new io_data_t(*in);
                 break;
             }
-
+#if 0
             /*
               Transmogrify file redirections
             */
@@ -411,6 +412,7 @@ static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, s
                 
                 break;
             }
+#endif
         }
         
         /* Record this IO redirection even if we failed (so we can free it) */
@@ -1231,7 +1233,7 @@ void exec( parser_t &parser, job_t *j )
                 io_chain_debug(j->io);
                 
                 /* Prefer to use posix_spawn, since it's faster on some systems */
-                bool use_posix_spawn = true;
+                bool use_posix_spawn = false;
                 if (use_posix_spawn)
                 {
                     posix_spawnattr_t attr = posix_spawnattr_t();

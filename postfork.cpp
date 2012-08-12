@@ -9,7 +9,6 @@
 #include "iothread.h"
 #include "exec.h"
 
-
 /** The number of times to try to call fork() before giving up */
 #define FORK_LAPS 5
 
@@ -158,6 +157,10 @@ static int handle_child_io( io_chain_t &io_chain )
 	{
         io_data_t *io = io_chain.at(idx);
 		int tmp;
+        
+        /* If this is not the last IO redirection for this fd, then skip it. This comes about because of the funky way in which we list IO redirections: every process in a job gets the input and output redirections, even internal ones. For example, in 'cat < foo | cat | cat > bar', the middle cat sees both < foo and > bar. It also gets pipes for its fd 0 and 1, which appear after in the list. */
+        if (io != io_chain.get_io_for_fd(io->fd))
+            continue;
 
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
 		{
@@ -185,6 +188,7 @@ static int handle_child_io( io_chain_t &io_chain )
 			case IO_FILE:
 			{
                 // Here we definitely do not want to set CLO_EXEC because our child needs access
+                printf("Open %s\n", io->filename_cstr);
 				if( (tmp=open( io->filename_cstr,
 						io->param2.flags, OPEN_MASK ) )==-1 )
 				{
@@ -364,7 +368,7 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     if (posix_spawnattr_init(attr) != 0) {
         return false;
     }
-        
+    
     if (posix_spawn_file_actions_init(actions) != 0) {
         posix_spawnattr_destroy(attr);
         return false;
@@ -428,6 +432,10 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     {
         const io_data_t *io = j->io.at(idx);
         
+        /* If this is not the last IO redirection for this fd, then skip it. This comes about because of the funky way in which we list IO redirections: every process in a job gets the input and output redirections, even internal ones. For example, in 'cat < foo | cat | cat > bar', the middle cat sees both < foo and > bar. It also gets pipes for its fd 0 and 1, which appear after in the list. */
+        if (io != j->io.get_io_for_fd(io->fd))
+            continue;
+
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
 		{
 			continue;

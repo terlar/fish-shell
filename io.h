@@ -56,9 +56,6 @@ public:
     /** Convenience to set filename_cstr via wcstring */
     void set_filename(const wcstring &str) {
         free((void *)filename_cstr);
-        if (str == L"/dev/null") {
-            puts("Whoa");
-        }
         filename_cstr = wcs2str(str.c_str());
     }
 
