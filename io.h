@@ -88,9 +88,16 @@ public:
     }
 
 	/** Set to true if this is an input io redirection */
-	int is_input;
+	bool is_input;
 	
-    io_data_t() : filename_cstr(NULL)
+    io_data_t() :
+        out_buffer(),
+        io_mode(0),
+        fd(0),
+        param1(),
+        param2(),
+        filename_cstr(NULL),
+        is_input(0)
     {
     }
     
@@ -110,18 +117,54 @@ public:
     }
 };
 
-typedef std::vector<io_data_t *> io_chain_t;
+class io_chain_t : private std::vector<io_data_t *> {
+public:
+    io_chain_t();
+    io_chain_t(io_data_t *);
+    
+    void remove(const io_data_t *element);
+    io_chain_t duplicate() const;
+    void duplicate_append(const io_chain_t &src);
+    void destroy();
+    
+    size_t size() const { return std::vector<io_data_t *>::size(); }
+    io_data_t *at(size_t idx) const { return std::vector<io_data_t *>::at(idx); }
+    
+    io_chain_t unique() const;
+    
+    bool empty() const { return std::vector<io_data_t *>::empty(); }
+    
+    void push_back(io_data_t *v) { std::vector<io_data_t *>::push_back(v); }
+    void swap(io_chain_t &other) { std::vector<io_data_t *>::swap(other); }
+    
+    typedef std::vector<io_data_t *>::iterator iterator;
+    typedef std::vector<io_data_t *>::const_iterator const_iterator;
+    iterator begin() { return std::vector<io_data_t *>::begin(); }
+    iterator end() { return std::vector<io_data_t *>::end(); }
+    const_iterator begin() const { return std::vector<io_data_t *>::begin(); }
+    const_iterator end() const { return std::vector<io_data_t *>::end(); }
+
+    void erase(iterator where) { std::vector<io_data_t *>::erase(where); }
+    
+    const io_data_t *get_io_for_fd(int fd) const;
+    io_data_t *get_io_for_fd(int fd);
+    
+    
+};
 
 /**
    Remove the specified io redirection from the chain
 */
 void io_remove(io_chain_t &list, const io_data_t *element);
 
-/**
-   Make a copy of the specified chain of redirections. Uses operator new.
-*/
-io_data_t *io_duplicate( io_data_t *l );
+/** Outputs debugging information about the io chain. */
+void io_chain_debug(const io_chain_t &chain);
+
+/** Make a copy of the specified chain of redirections. Uses operator new. */
 io_chain_t io_duplicate(const io_chain_t &chain);
+
+/** Return a shallow copy of the specified chain of redirections that contains only the applicable redirections. That is, if there's multiple redirections for the same fd, only the second one is included. */
+io_chain_t io_unique(const io_chain_t &chain);
 
 /** Appends a copy of the specified 'src' chain of redirections to 'dst.' Uses operator new. */
 void io_duplicate_append( const io_chain_t &src, io_chain_t &dst );
@@ -150,7 +193,7 @@ void io_buffer_destroy( io_data_t *io_buffer );
    used to buffer the output of a command, or non-zero to buffer the
    input to a command.
 */
-io_data_t *io_buffer_create( int is_input );
+io_data_t *io_buffer_create( bool is_input );
 
 /**
    Close output pipe, and read from input pipe until eof.

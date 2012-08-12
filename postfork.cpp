@@ -9,7 +9,6 @@
 #include "iothread.h"
 #include "exec.h"
 
-
 /** The number of times to try to call fork() before giving up */
 #define FORK_LAPS 5
 
@@ -107,7 +106,7 @@ static void free_fd(io_chain_t &io_chain, int fd)
 {
     for (size_t idx = 0; idx < io_chain.size(); idx++) 
     {
-        io_data_t *io = io_chain[idx];
+        io_data_t *io = io_chain.at(idx);
         if( ( io->io_mode == IO_PIPE ) || ( io->io_mode == IO_BUFFER ) )
         {
             int i;
@@ -156,8 +155,12 @@ static int handle_child_io( io_chain_t &io_chain )
 	close_unused_internal_pipes( io_chain );
 	for (size_t idx = 0; idx < io_chain.size(); idx++)
 	{
-        io_data_t *io = io_chain[idx];
+        io_data_t *io = io_chain.at(idx);
 		int tmp;
+        
+        /* If this is not the last IO redirection for this fd, then skip it. This comes about because of the funky way in which we list IO redirections: every process in a job gets the input and output redirections, even internal ones. For example, in 'cat < foo | cat | cat > bar', the middle cat sees both < foo and > bar. It also gets pipes for its fd 0 and 1, which appear after in the list. */
+        if (io != io_chain.get_io_for_fd(io->fd))
+            continue;
 
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
 		{
@@ -184,7 +187,7 @@ static int handle_child_io( io_chain_t &io_chain )
 
 			case IO_FILE:
 			{
-                // Here we definitely do not want to set CLO_EXEC because our child needs access
+				// Here we definitely do not want to set CLO_EXEC because our child needs access
 				if( (tmp=open( io->filename_cstr,
 						io->param2.flags, OPEN_MASK ) )==-1 )
 				{
@@ -240,6 +243,7 @@ static int handle_child_io( io_chain_t &io_chain )
 			case IO_BUFFER:
 			case IO_PIPE:
 			{
+                /* If write_pipe_idx is 0, it means we're connecting to the read end (first pipe fd). If it's 1, we're connecting to the write end (second pipe fd). */
 				unsigned int write_pipe_idx = (io->is_input ? 0 : 1);
 /*
 				debug( 0,
@@ -256,16 +260,11 @@ static int handle_child_io( io_chain_t &io_chain )
 					perror( "dup2" );
 					return -1;
 				}
-
-				if( write_pipe_idx > 0 ) 
-				{
-					exec_close( io->param1.pipe_fd[0]);
-					exec_close( io->param1.pipe_fd[1]);
-				}
-				else
-				{
-					exec_close( io->param1.pipe_fd[0] );
-				}
+                
+                if (io->param1.pipe_fd[0] >= 0)
+                    exec_close( io->param1.pipe_fd[0]);
+                if (io->param1.pipe_fd[1] >= 0)
+                    exec_close( io->param1.pipe_fd[1]);
 				break;
 			}
 			
@@ -362,13 +361,13 @@ pid_t execute_fork(bool wait_for_threads_to_die)
     return 0;
 }
 
-bool fork_actions_make_spawn_stuff(posix_spawnattr_t *attr, posix_spawn_file_actions_t *actions, job_t *j, process_t *p)
+bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_file_actions_t *actions, job_t *j, process_t *p)
 {
     /* Initialize the output */
     if (posix_spawnattr_init(attr) != 0) {
         return false;
     }
-        
+    
     if (posix_spawn_file_actions_init(actions) != 0) {
         posix_spawnattr_destroy(attr);
         return false;
@@ -428,10 +427,14 @@ bool fork_actions_make_spawn_stuff(posix_spawnattr_t *attr, posix_spawn_file_act
         err = posix_spawn_file_actions_addclose(actions, files_to_close.at(i));
     }
     
-	for (io_chain_t::const_iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    for (size_t idx = 0; idx < j->io.size(); idx++)
     {
-        const io_data_t *io = *iter;
+        const io_data_t *io = j->io.at(idx);
         
+        /* If this is not the last IO redirection for this fd, then skip it. This comes about because of the funky way in which we list IO redirections: every process in a job gets the input and output redirections, even internal ones. For example, in 'cat < foo | cat | cat > bar', the middle cat sees both < foo and > bar. It also gets pipes for its fd 0 and 1, which appear after in the list. */
+        if (io != j->io.get_io_for_fd(io->fd))
+            continue;
+
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
 		{
 			continue;

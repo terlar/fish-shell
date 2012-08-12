@@ -811,9 +811,9 @@ static int select_try( job_t *j )
 
 	FD_ZERO(&fds);
 	
-    for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    for (size_t idx = 0; idx < j->io.size(); idx++)
 	{
-        io_data_t *d = *iter;
+        const io_data_t *d = j->io.at(idx);
 		if( d->io_mode == IO_BUFFER )
 		{
 			int fd = d->param1.pipe_fd[0];
@@ -851,9 +851,9 @@ static void read_try( job_t *j )
 	/*
 	  Find the last buffer, which is the one we want to read from
 	*/
-    for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    for (size_t idx = 0; idx < j->io.size(); idx++)
 	{
-        io_data_t *d = *iter;		
+        io_data_t *d = j->io.at(idx);
 		if( d->io_mode == IO_BUFFER )
 		{
 			buff=d;

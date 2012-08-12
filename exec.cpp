@@ -157,7 +157,7 @@ static bool use_fd_in_pipe(int fd, const io_chain_t &io_chain )
 {
     for (size_t idx = 0; idx < io_chain.size(); idx++)
     {
-        const io_data_t *io = io_chain[idx];
+        const io_data_t *io = io_chain.at(idx);
         if( ( io->io_mode == IO_BUFFER ) || 
             ( io->io_mode == IO_PIPE ) )
         {
@@ -319,126 +319,6 @@ static int has_fd( const io_chain_t &d, int fd )
 }
 
 /**
-   Free a transmogrified io chain. Only the chain itself and resources
-   used by a transmogrified IO_FILE redirection are freed, since the
-   original chain may still be needed.
-*/
-static void io_cleanup_chains(io_chain_t &chains, const std::vector<int> &opened_fds) {
-    /* Close all the fds */
-    for (size_t idx = 0; idx < opened_fds.size(); idx++) {
-        close(opened_fds.at(idx));
-    }
-    
-    /* Then delete all of the redirections we made */
-    for (io_chain_t::iterator iter = chains.begin(); iter != chains.end(); iter++) {
-        delete *iter;
-    }
-    chains.clear();
-
-}
-
-/**
-   Make a copy of the specified io redirection chain, but change file
-   redirection into fd redirection. This makes the redirection chain
-   suitable for use as block-level io, since the file won't be
-   repeatedly reopened for every command in the block, which would
-   reset the cursor position.
-
-   \return the transmogrified chain on sucess, or 0 on failiure
-*/
-static bool io_transmogrify(const io_chain_t &in_chain, io_chain_t &out_chain, std::vector<int> &out_opened_fds) {
-    ASSERT_IS_MAIN_THREAD();
-    assert(out_chain.empty());
-    
-    /* Just to be clear what we do for an empty chain */
-    if (in_chain.empty()) {
-        return true;
-    }
-    
-    bool success = true;
-    
-    /* Make our chain of redirections */
-    io_chain_t result_chain;
-    
-    /* In the event we can't finish transmorgrifying, we'll have to close all the files we opened. */
-    std::vector<int> opened_fds;
-                
-    for (io_chain_t::const_iterator iter = in_chain.begin(); iter != in_chain.end(); iter++) {
-    
-        io_data_t *in = *iter;
-        io_data_t *out = NULL; //gets allocated via new
-                
-        switch( in->io_mode )
-        {
-            default:
-                /* Unknown type, should never happen */
-                fprintf(stderr, "Unknown io_mode %ld\n", (long)in->io_mode);
-                abort();
-                break;
-                
-            /*
-              These redirections don't need transmogrification. They can be passed through.
-            */
-            case IO_PIPE:
-            case IO_FD:
-            case IO_BUFFER:
-            case IO_CLOSE:
-            {
-                out = new io_data_t(*in);
-                break;
-            }
-
-            /*
-              Transmogrify file redirections
-            */
-            case IO_FILE:
-            {
-                out = new io_data_t();                
-                out->fd = in->fd;
-                out->io_mode = IO_FD;
-                out->param2.close_old = 1;
-
-                int fd;
-                if ((fd=open(in->filename_cstr, in->param2.flags, OPEN_MASK))==-1)
-                {
-                    debug( 1, 
-                           FILE_ERROR,
-                           in->filename_cstr );
-                                    
-                    wperror( L"open" );
-                    success = false;
-                    break;
-                }	
-
-                opened_fds.push_back(fd);
-                out->param1.old_fd = fd;
-                
-                break;
-            }
-        }
-        
-        /* Record this IO redirection even if we failed (so we can free it) */
-        result_chain.push_back(out);
-        
-        /* But don't go any further if we failed */
-        if (! success) {
-            break;
-        }
-    }
-    
-    /* Now either return success, or clean up */
-    if (success) {
-        /* Yay */
-        out_chain.swap(result_chain);
-        out_opened_fds.swap(opened_fds);
-    } else {
-        /* No dice - clean up */
-        io_cleanup_chains(result_chain, opened_fds);
-    }
-    return success;
-}
-
-/**
    Morph an io redirection chain into redirections suitable for
    passing to eval, call eval, and clean up morphed redirections.
 
@@ -452,29 +332,15 @@ static void internal_exec_helper( parser_t &parser,
 								  enum block_type_t block_type,
 								  io_chain_t &ios )
 {
-    io_chain_t morphed_chain;
-    std::vector<int> opened_fds;
-    bool transmorgrified = io_transmogrify(ios, morphed_chain, opened_fds);
-    
 	int is_block_old=is_block;
 	is_block=1;
-	
-	/*
-	  Did the transmogrification fail - if so, set error status and return
-	*/
-	if( ! transmorgrified )
-	{
-		proc_set_last_status( STATUS_EXEC_FAIL );
-		return;
-	}
-	
+
 	signal_unblock();
 	
-	parser.eval( def, morphed_chain, block_type );		
+	parser.eval( def, ios, block_type );
 	
 	signal_block();
 	
-	io_cleanup_chains(morphed_chain, opened_fds);
 	job_reap( 0 );
 	is_block=is_block_old;
 }
@@ -545,9 +411,9 @@ void exec( parser_t &parser, job_t *j )
 	}
 
 	const io_data_t *input_redirect = NULL;
-    for (io_chain_t::iterator iter = j->io.begin(); iter != j->io.end(); iter++)
+    for (size_t idx = 0; idx < j->io.size(); idx++)
 	{
-        input_redirect = *iter;
+        input_redirect = j->io.at(idx);
         
 		if( (input_redirect->io_mode == IO_BUFFER) && 
 			input_redirect->is_input )
@@ -1174,7 +1040,7 @@ void exec( parser_t &parser, job_t *j )
                 fflush(stderr);
                 if (g_log_forks) {
                     printf("fork #%d: Executing fork for internal builtin for '%ls'\n", g_fork_count, p->argv0());
-                    io_print(io_chain_t(1, io));
+                    io_print(io_chain_t(io));
                 }
 				pid = execute_fork(false);
 				if( pid == 0 )
@@ -1231,13 +1097,16 @@ void exec( parser_t &parser, job_t *j )
                     printf("fork #%d: forking for '%s' in '%ls:%ls'\n", g_fork_count, actual_cmd, file ? file : L"", func ? func : L"?");
                 }
                 
+                //fprintf(stderr, "IO chain for %s:\n", actual_cmd);
+                //io_chain_debug(j->io);
+                
                 /* Prefer to use posix_spawn, since it's faster on some systems */
-                bool use_posix_spawn = true;
+                bool use_posix_spawn = false;
                 if (use_posix_spawn)
                 {
                     posix_spawnattr_t attr = posix_spawnattr_t();
                     posix_spawn_file_actions_t actions = posix_spawn_file_actions_t();
-                    bool made_it = fork_actions_make_spawn_stuff(&attr, &actions, j, p);
+                    bool made_it = fork_actions_make_spawn_properties(&attr, &actions, j, p);
                     if (made_it)
                     {
                         int spawn_ret = posix_spawn(&pid, actual_cmd, &actions, &attr, argv, envv);
@@ -1384,7 +1253,7 @@ static int exec_subshell_internal( const wcstring &cmd, wcstring_list_t *lst )
 	prev_status = proc_get_last_status();
 	
     parser_t &parser = parser_t::principal_parser();
-	if( parser.eval( cmd, io_chain_t(1, io_buffer), SUBST ) )
+	if( parser.eval( cmd, io_chain_t(io_buffer), SUBST ) )
 	{
 		status = -1;
 	}
