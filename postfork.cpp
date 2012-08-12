@@ -187,8 +187,7 @@ static int handle_child_io( io_chain_t &io_chain )
 
 			case IO_FILE:
 			{
-                // Here we definitely do not want to set CLO_EXEC because our child needs access
-                printf("Open %s\n", io->filename_cstr);
+				// Here we definitely do not want to set CLO_EXEC because our child needs access
 				if( (tmp=open( io->filename_cstr,
 						io->param2.flags, OPEN_MASK ) )==-1 )
 				{
