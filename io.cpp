@@ -13,6 +13,7 @@ Utilities for io redirection.
 #include <errno.h>
 #include <sys/types.h>
 #include <set>
+#include <algorithm>
 
 #ifdef HAVE_SYS_TERMIOS_H
 #include <sys/termios.h>
