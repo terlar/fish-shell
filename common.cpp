@@ -161,64 +161,6 @@ int fgetws2(wcstring *s, FILE *f)
 	}
 }
 
-int fgetws2( wchar_t **b, int *len, FILE *f )
-{
-	int i=0;
-	wint_t c;
-	
-	wchar_t *buff = *b;
-
-	while( 1 )
-	{
-		/* Reallocate the buffer if necessary */
-		if( i+1 >= *len )
-		{
-			int new_len = maxi( 128, (*len)*2);
-			buff = (wchar_t *)realloc( buff, sizeof(wchar_t)*new_len );
-			if( buff == 0 )
-			{
-				DIE_MEM();
-			}
-			else
-			{
-				*len = new_len;
-				*b = buff;
-			}			
-		}
-		
-		errno=0;		
-		
-		c = getwc( f );
-		
-		if( errno == EILSEQ )
-		{
-			continue;
-		}
-	
-//fwprintf( stderr, L"b\n" );
-		
-		switch( c )
-		{
-			/* End of line */ 
-			case WEOF:
-			case L'\n':
-			case L'\0':
-				buff[i]=L'\0';
-				return i;				
-				/* Ignore carriage returns */
-			case L'\r':
-				break;
-				
-			default:
-				buff[i++]=c;
-				break;
-		}		
-
-
-	}
-
-}
-
 wchar_t *str2wcs( const char *in )
 {
 	wchar_t *out;
@@ -253,8 +195,8 @@ wcstring str2wcstring( const std::string &in )
 wchar_t *str2wcs_internal( const char *in, wchar_t *out )
 {
 	size_t res=0;
-	int in_pos=0;
-	int out_pos = 0;
+	size_t in_pos=0;
+	size_t out_pos = 0;
 	mbstate_t state;
 	size_t len;
 
@@ -354,8 +296,8 @@ std::string wcs2string(const wcstring &input)
 char *wcs2str_internal( const wchar_t *in, char *out )
 {
 	size_t res=0;
-	int in_pos=0;
-	int out_pos = 0;
+	size_t in_pos=0;
+	size_t out_pos = 0;
 	mbstate_t state;
 
 	CHECK( in, 0 );
@@ -396,8 +338,7 @@ char *wcs2str_internal( const wchar_t *in, char *out )
 
 char **wcsv2strv( const wchar_t * const *in )
 {
-	int count =0;
-	int i;
+	size_t i, count = 0;
 
 	while( in[count] != 0 )
 		count++;
@@ -618,9 +559,9 @@ __sentinel bool contains_internal( const wcstring &needle, ... )
 	return res;
 }
 
-int read_blocked(int fd, void *buf, size_t count)
+long read_blocked(int fd, void *buf, size_t count)
 {
-	int res;	
+	ssize_t res;
 	sigset_t chldset, oldset; 
 
 	sigemptyset( &chldset );
@@ -628,7 +569,7 @@ int read_blocked(int fd, void *buf, size_t count)
 	VOMIT_ON_FAILURE(pthread_sigmask(SIG_BLOCK, &chldset, &oldset));
 	res = read( fd, buf, count );
 	VOMIT_ON_FAILURE(pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-	return res;	
+	return res;
 }
 
 ssize_t write_loop(int fd, const char *buff, size_t count)
@@ -656,7 +597,7 @@ ssize_t write_loop(int fd, const char *buff, size_t count)
 			break;
 		}
 	}						
-	return out_cum;
+	return (ssize_t)out_cum;
 }
 
 ssize_t read_loop(int fd, void *buff, size_t count)
@@ -798,7 +739,7 @@ void format_long_safe(wchar_t buff[128], long val) {
         while (val > 0) {
             long rem = val % 10;
             /* Here we're assuming that wide character digits are contiguous - is that a correct assumption? */
-            buff[idx++] = L'0' + (rem < 0 ? -rem : rem);
+            buff[idx++] = L'0' + (wchar_t)(rem < 0 ? -rem : rem);
             val /= 10;
         }
         if (negative)
@@ -1114,8 +1055,10 @@ wcstring escape_string( const wcstring &in, escape_flags_t flags ) {
 wchar_t *unescape( const wchar_t * orig, int flags )
 {
 	
-	int mode = 0; 
-	int in_pos, out_pos, len;
+	int mode = 0;
+    int out_pos;
+	size_t in_pos;
+    size_t len;
 	int c;
 	int bracket_count=0;
 	wchar_t prev=0;	
@@ -1131,7 +1074,7 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 	if( !in )
 		DIE_MEM();
 	
-	for( in_pos=0, out_pos=0; 
+	for( in_pos=0, out_pos=0;
 		 in_pos<len; 
 		 (prev=(out_pos>=0)?in[out_pos]:0), out_pos++, in_pos++ )
 	{
@@ -1220,6 +1163,8 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 								{
 									base=8;
 									chars=3;
+                                    // note in_pod must be larger than 0 since we incremented it above
+                                    assert(in_pos > 0);
 									in_pos--;
 									break;
 								}								
@@ -1227,7 +1172,7 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 					
 							for( i=0; i<chars; i++ )
 							{
-								int d = convert_digit( in[++in_pos],base);
+								long d = convert_digit( in[++in_pos],base);
 								
 								if( d < 0 )
 								{
@@ -1240,7 +1185,7 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 
 							if( (res <= max_val) )
 							{
-								in[out_pos] = (byte?ENCODE_DIRECT_BASE:0)+res;
+								in[out_pos] = (wchar_t)((byte?ENCODE_DIRECT_BASE:0)+res);
 							}
 							else
 							{	
@@ -1803,7 +1748,7 @@ wcstring format_size(long long sz)
 		{
 			if( sz < (1024*1024) || !sz_name[i+1] )
 			{
-				int isz = sz/1024;
+				long isz = ((long)sz)/1024;
 				if( isz > 9 )
 					result.append( format_string( L"%d%ls", isz, sz_name[i] ));
 				else
@@ -2050,7 +1995,12 @@ scoped_lock::~scoped_lock() {
     if (locked) this->unlock();
 }
 
-wcstokenizer::wcstokenizer(const wcstring &s, const wcstring &separator) : sep(separator) {
+wcstokenizer::wcstokenizer(const wcstring &s, const wcstring &separator) :
+    buffer(),
+    str(),
+    state(),
+    sep(separator)
+{
     buffer = wcsdup(s.c_str());
     str = buffer;
     state = NULL;

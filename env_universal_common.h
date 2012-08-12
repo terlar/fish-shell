@@ -3,6 +3,7 @@
 
 #include <wchar.h>
 #include <queue>
+#include <string>
 #include "util.h"
 
 /**
@@ -63,12 +64,13 @@ typedef struct
 	   Number of queues that contain this message. Once this reaches zero, the message should be deleted
 	*/
 	int count;
+
 	/**
 	   Message body. The message must be allocated using enough memory to actually contain the message.
 	*/
-	char body[1];
-}
-	message_t;
+	std::string body;
+    
+} message_t;
 
 typedef std::queue<message_t *> message_queue_t;
 
@@ -103,12 +105,12 @@ typedef struct connection
 	/**
 	   Number of bytes that have already been consumed.
 	*/
-	int buffer_consumed;
+	size_t buffer_consumed;
 	
 	/**
 	   Number of bytes that have been read into the buffer. 
 	*/
-	int buffer_used;
+	size_t buffer_used;
 	
 
 	/**

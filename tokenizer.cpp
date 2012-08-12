@@ -141,10 +141,12 @@ void tok_init( tokenizer *tok, const wchar_t *b, int flags )
 	tok->accept_unfinished = !! (flags & TOK_ACCEPT_UNFINISHED);
 	tok->show_comments = !! (flags & TOK_SHOW_COMMENTS);
     tok->squash_errors = !! (flags & TOK_SQUASH_ERRORS);
-	tok->has_next=1;
+	tok->has_next=true;
 
 	tok->has_next = (*b != L'\0');
 	tok->orig_buff = tok->buff = b;
+    tok->cached_lineno_offset = 0;
+    tok->cached_lineno_count = 0;
 	tok_next( tok );
 }
 
@@ -153,8 +155,6 @@ void tok_destroy( tokenizer *tok )
 	CHECK( tok, );
 	
 	free( tok->last );
-	if( tok->free_orig )
-		free( (void *)tok->orig_buff );
 }
 
 int tok_last_type( tokenizer *tok )
@@ -182,6 +182,42 @@ int tok_has_next( tokenizer *tok )
 
 /*	fwprintf( stderr, L"has_next is %ls \n", tok->has_next?L"true":L"false" );*/
 	return 	tok->has_next;
+}
+
+int tokenizer::line_number_of_character_at_offset(size_t offset)
+{
+    // we want to return (one plus) the number of newlines at offsets less than the given offset
+    // cached_lineno_count is the number of newlines at indexes less than cached_lineno_offset
+    const wchar_t *str = orig_buff;
+	if (! str)
+		return 0;
+    
+    // easy hack to handle 0
+    if (offset == 0)
+        return 1;
+    
+    size_t i;
+    if (offset > cached_lineno_offset)
+    {
+        for ( i = cached_lineno_offset; str[i] && i<offset; i++)
+        {
+            /* Add one for every newline we find in the range [cached_lineno_offset, offset) */
+            if( str[i] == L'\n' )
+                cached_lineno_count++;
+        }
+        cached_lineno_offset = i; //note: i, not offset, in case offset is beyond the length of the string
+    }
+    else if (offset < cached_lineno_offset)
+    {
+        /* Subtract one for every newline we find in the range [offset, cached_lineno_offset) */
+        for (i = offset; i < cached_lineno_offset; i++)
+        {
+            if (str[i] == L'\n')
+                cached_lineno_count--;
+        }
+        cached_lineno_offset = offset;
+    }
+	return cached_lineno_count + 1;
 }
 
 /**
@@ -232,7 +268,7 @@ static int myal( wchar_t c )
 static void read_string( tokenizer *tok )
 {
 	const wchar_t *start;
-	int len;
+	long len;
 	int mode=0;
 	int do_loop=1;
 	int paran_count=0;
@@ -432,13 +468,12 @@ static void read_string( tokenizer *tok )
 static void read_comment( tokenizer *tok )
 {
 	const wchar_t *start;
-	int len;
 
 	start = tok->buff;
 	while( *(tok->buff)!= L'\n' && *(tok->buff)!= L'\0' )
 		tok->buff++;
 
-	len = tok->buff - start;
+	size_t len = tok->buff - start;
 	if( !check_size( tok, len ))
 		return;
 
@@ -553,7 +588,7 @@ void tok_next( tokenizer *tok )
 	
 	if( tok_last_type( tok ) == TOK_ERROR )
 	{
-		tok->has_next=0;
+		tok->has_next=false;
 		return;
 	}
 
@@ -610,7 +645,7 @@ void tok_next( tokenizer *tok )
 		case L'\0':
 			tok->last_type = TOK_END;
 			/*fwprintf( stderr, L"End of string\n" );*/
-			tok->has_next = 0;
+			tok->has_next = false;
 			break;
 		case 13:
 		case L'\n':
@@ -700,7 +735,7 @@ int tok_get_pos( tokenizer *tok )
 {
 	CHECK( tok, 0 );
 	
-	return tok->last_pos;
+	return (int)tok->last_pos;
 }
 
 
@@ -709,7 +744,7 @@ void tok_set_pos( tokenizer *tok, int pos )
 	CHECK( tok, );
 	
 	tok->buff = tok->orig_buff + pos;
-	tok->has_next = 1;
+	tok->has_next = true;
 	tok_next( tok );
 }
 

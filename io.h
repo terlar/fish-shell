@@ -21,7 +21,7 @@ private:
     shared_ptr<std::vector<char> > out_buffer;
 
     /* No assignment allowed */
-    void operator=(const io_data_t &rhs) { assert(0); }
+    void operator=(const io_data_t &rhs);
 
 public:
 	/** Type of redirect */

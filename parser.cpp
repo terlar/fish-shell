@@ -1009,31 +1009,30 @@ const wchar_t *parser_t::is_function() const
 
 int parser_t::get_lineno() const
 {
-	const wchar_t *whole_str;
-	const wchar_t *function_name;
-
 	int lineno;
-	
-/*	static const wchar_t *prev_str = 0;
-  static int i=0;
-  static int lineno=1;
-*/
-	if( !current_tokenizer )
+    
+    if( ! current_tokenizer || ! tok_string( current_tokenizer ))
 		return -1;
-	
-	whole_str = tok_string( current_tokenizer );
-
-	if( !whole_str )
-		return -1;
-	
-	lineno = parse_util_lineno( whole_str, current_tokenizer_pos );
-
+        
+    lineno = current_tokenizer->line_number_of_character_at_offset(current_tokenizer_pos);
+    
+    const wchar_t *function_name;
 	if( (function_name = is_function()) )
 	{
 		lineno += function_get_definition_offset( function_name );
 	}
 
 	return lineno;
+}
+
+int parser_t::line_number_of_character_at_offset(size_t idx) const
+{
+    if( ! current_tokenizer)
+        return -1;
+    
+    int result = current_tokenizer->line_number_of_character_at_offset(idx);
+    //assert(result == parse_util_lineno(tok_string( current_tokenizer ), idx));
+    return result;
 }
 
 const wchar_t *parser_t::current_filename() const
@@ -1226,11 +1225,9 @@ const wchar_t *parser_t::get_buffer() const
 
 int parser_t::is_help( const wchar_t *s, int min_match ) const
 {
-	int len;
-
 	CHECK( s, 0 );
 
-	len = wcslen(s);
+	size_t len = wcslen(s);
 
 	min_match = maxi( min_match, 3 );
 		
@@ -1343,7 +1340,7 @@ void parser_t::parse_job_argument_list( process_t *p,
 				}
 
 				errno = 0;
-				p->pipe_write_fd = wcstol( tok_last( tok ), &end, 10 );
+				p->pipe_write_fd = fish_wcstoi( tok_last( tok ), &end, 10 );
 				if( p->pipe_write_fd < 0 || errno || *end )
 				{
 					error( SYNTAX_ERROR,
@@ -1504,7 +1501,7 @@ void parser_t::parse_job_argument_list( process_t *p,
 				new_io.reset(new io_data_t);
 
 				errno = 0;
-				new_io->fd = wcstol( tok_last( tok ),
+				new_io->fd = fish_wcstoi( tok_last( tok ),
 									 &end,
 									 10 );
 				if( new_io->fd < 0 || errno || *end )
@@ -1594,9 +1591,7 @@ void parser_t::parse_job_argument_list( process_t *p,
 									new_io->io_mode = IO_FD;
 									errno = 0;
 									
-									new_io->param1.old_fd = wcstol( target.c_str(),
-																	&end,
-																	10 );
+									new_io->param1.old_fd = fish_wcstoi( target.c_str(), &end, 10 );
 									
 									if( ( new_io->param1.old_fd < 0 ) ||
 										errno || *end )
@@ -2175,14 +2170,13 @@ int parser_t::parse_job( process_t *p,
 			if( make_sub_block )
 			{
 			
-				int end_pos = end-tok_string( tok );
+				long end_pos = end-tok_string( tok );
                 const wcstring sub_block(tok_string( tok ) + current_tokenizer_pos, end_pos - current_tokenizer_pos);
 			
 				p->type = INTERNAL_BLOCK;
 				args.at( 0 ) =  completion_t(sub_block);
 			
-				tok_set_pos( tok,
-							 end_pos );
+				tok_set_pos( tok, (int)end_pos );
 
 				while( prev_block != current_block )
 				{
@@ -2350,10 +2344,10 @@ void parser_t::eval_job( tokenizer *tok )
 			{
 				if( job_start_pos < tok_get_pos( tok ) )
 				{
-					int stop_pos = tok_get_pos( tok );
+					long stop_pos = tok_get_pos( tok );
 					const wchar_t *newline = wcschr(tok_string(tok)+start_pos, L'\n');
 					if( newline )
-						stop_pos = mini( stop_pos, newline - tok_string(tok) );
+						stop_pos = mini<long>( stop_pos, newline - tok_string(tok) );
 
 					j->set_command(wcstring(tok_string(tok)+start_pos, stop_pos-start_pos));
 				}
@@ -2394,8 +2388,8 @@ void parser_t::eval_job( tokenizer *tok )
 				{
 					t3 = get_time();
 					profile_item->level=eval_level;
-					profile_item->parse = t2-t1;
-					profile_item->exec=t3-t2;
+					profile_item->parse = (int)(t2-t1);
+					profile_item->exec=(int)(t3-t2);
 				}
 
 				if( current_block->type == WHILE )
@@ -2545,7 +2539,7 @@ int parser_t::eval( const wcstring &cmdStr, const io_chain_t &io, enum block_typ
 
 	this->push_block( block_type );
 
-	current_tokenizer = (tokenizer *)malloc( sizeof(tokenizer));
+	current_tokenizer = new tokenizer;
 	tok_init( current_tokenizer, cmd, 0 );
 
 	error_code = 0;
@@ -2597,7 +2591,7 @@ int parser_t::eval( const wcstring &cmdStr, const io_chain_t &io, enum block_typ
 	this->print_errors_stderr();
 
 	tok_destroy( current_tokenizer );
-	free( current_tokenizer );
+	delete current_tokenizer;
 
     while (forbidden_function.size() > forbid_count)
 		parser_t::allow_function();
@@ -2866,6 +2860,8 @@ int parser_t::test( const  wchar_t * buff,
 	
 	tokenizer *previous_tokenizer=current_tokenizer;
 	int previous_pos=current_tokenizer_pos;
+    
+    // PCA These statics are terrifying - I have no idea whether and why these variables need to be static
 	static int block_pos[BLOCK_MAX_COUNT];
 	static int block_type[BLOCK_MAX_COUNT];
 	int res = 0;
@@ -2903,9 +2899,8 @@ int parser_t::test( const  wchar_t * buff,
 
 	if( block_level )
 	{
-		int i;
-		int len = wcslen(buff);
-		for( i=0; i<len; i++ )
+		size_t len = wcslen(buff);
+		for( size_t i=0; i<len; i++ )
 		{
 			block_level[i] = -1;
 		}
@@ -3552,8 +3547,7 @@ int parser_t::test( const  wchar_t * buff,
 	if( block_level )
 	{
 		int last_level = 0;
-		int i, j;
-		int len = wcslen(buff);
+		size_t i, len = wcslen(buff);
 		for( i=0; i<len; i++ )
 		{
 			if( block_level[i] >= 0 )
@@ -3564,11 +3558,12 @@ int parser_t::test( const  wchar_t * buff,
 				  level. This avoid using the wrong indentation level
 				  if a new line starts with whitespace.
 				*/
-				for( j=i-1; j>=0; j-- )
+                size_t prev_char_idx = i;
+                while (prev_char_idx--)
 				{
-					if( !wcschr( L" \n\t\r", buff[j] ) )
+					if( !wcschr( L" \n\t\r", buff[prev_char_idx] ) )
 						break;
-					block_level[j] = last_level;
+					block_level[prev_char_idx] = last_level;
 				}
 			}
 			block_level[i] = last_level;
@@ -3579,15 +3574,14 @@ int parser_t::test( const  wchar_t * buff,
 		  validator had at exit. This makes sure a new line is
 		  correctly indented even if it is empty.
 		*/
-		for( j=len-1; j>=0; j-- )
+        size_t suffix_idx = len;
+        while (suffix_idx--)
 		{
-			if( !wcschr( L" \n\t\r", buff[j] ) )
+			if( !wcschr( L" \n\t\r", buff[suffix_idx] ) )
 				break;
-			block_level[j] = count;
+			block_level[suffix_idx] = count;
 		}
-		
-
-	}		
+	}
 
 	/*
 	  Calculate exit status

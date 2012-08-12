@@ -51,53 +51,13 @@
 */
 #define AUTOLOAD_MIN_AGE 60
 
-
-int parse_util_lineno( const wchar_t *str, int len )
+int parse_util_lineno( const wchar_t *str, size_t offset )
 {
-	/**
-	   First cached state
-	*/
-	static wchar_t *prev_str = 0;
-	static int i=0;
-	static int res = 1;
+	if (! str)
+		return 0;
 
-	/**
-	   Second cached state
-	*/
-	static wchar_t *prev_str2 = 0;
-	static int i2 = 0;
-	static int res2 = 1;
-
-	CHECK( str, 0 );
-
-	if( str != prev_str || i>len )
-	{
-		if( prev_str2 == str && i2 <= len )
-		{
-			wchar_t *tmp_str = prev_str;
-			int tmp_i = i;
-			int tmp_res = res;
-			prev_str = prev_str2;
-			i=i2;
-			res=res2;
-			
-			prev_str2 = tmp_str;
-			i2 = tmp_i;
-			res2 = tmp_res;
-		}
-		else
-		{
-			prev_str2 = prev_str;
-			i2 = i;
-			res2=res;
-				
-			prev_str = (wchar_t *)str;
-			i=0;
-			res=1;
-		}
-	}
-	
-	for( ; str[i] && i<len; i++ )
+	int res = 1;
+	for( size_t i=0; str[i] && i<offset; i++ )
 	{
 		if( str[i] == L'\n' )
 		{
@@ -108,18 +68,11 @@ int parse_util_lineno( const wchar_t *str, int len )
 }
 
 
-int parse_util_get_line_from_offset( const wcstring &str, int pos )
+int parse_util_get_line_from_offset( const wcstring &str, size_t pos )
 {
-	//	return parse_util_lineno( buff, pos );
     const wchar_t *buff = str.c_str();
-	int i;
 	int count = 0;
-	if( pos < 0 )
-	{
-		return -1;
-	}
-	
-	for( i=0; i<pos; i++ )
+	for( size_t i=0; i<pos; i++ )
 	{
 		if( !buff[i] )
 		{
@@ -135,15 +88,15 @@ int parse_util_get_line_from_offset( const wcstring &str, int pos )
 }
 
 
-int parse_util_get_offset_from_line( const wcstring &str, int line )
+size_t parse_util_get_offset_from_line( const wcstring &str, int line )
 {
     const wchar_t *buff = str.c_str();
-	int i;
+	size_t i;
 	int count = 0;
 	
 	if( line < 0 )
 	{
-		return -1;
+		return (size_t)(-1);
 	}
 
 	if( line == 0 )
@@ -168,19 +121,19 @@ int parse_util_get_offset_from_line( const wcstring &str, int line )
 	}
 }
 
-int parse_util_get_offset( const wcstring &str, int line, int line_offset )
+size_t parse_util_get_offset( const wcstring &str, int line, long line_offset )
 {
     const wchar_t *buff = str.c_str();
-	int off = parse_util_get_offset_from_line( buff, line );
-	int off2 = parse_util_get_offset_from_line( buff, line+1 );
-	int line_offset2 = line_offset;
+	size_t off = parse_util_get_offset_from_line( buff, line );
+	size_t off2 = parse_util_get_offset_from_line( buff, line+1 );
+	long line_offset2 = line_offset;
 	
-	if( off < 0 )
+	if( off == (size_t)(-1) )
 	{
 		return -1;
 	}
 	
-	if( off2 < 0 )
+	if( off2 == (size_t)(-1) )
 	{
 		off2 = wcslen( buff )+1;
 	}
@@ -292,7 +245,7 @@ int parse_util_locate_cmdsubst( const wchar_t *in,
 
 
 void parse_util_cmdsubst_extent( const wchar_t *buff,
-								 int cursor_pos,
+								 size_t cursor_pos,
 								 const wchar_t **a, 
 								 const wchar_t **b )
 {
@@ -363,13 +316,13 @@ void parse_util_cmdsubst_extent( const wchar_t *buff,
    Get the beginning and end of the job or process definition under the cursor
 */
 static void job_or_process_extent( const wchar_t *buff,
-								   int cursor_pos,
+								   size_t cursor_pos,
 								   const wchar_t **a, 
 								   const wchar_t **b, 
 								   int process )
 {
 	const wchar_t *begin, *end;
-	int pos;
+	long pos;
 	wchar_t *buffcpy;
 	int finished=0;
 	
@@ -460,7 +413,7 @@ static void job_or_process_extent( const wchar_t *buff,
 }
 
 void parse_util_process_extent( const wchar_t *buff,
-								int pos,
+								size_t pos,
 								const wchar_t **a, 
 								const wchar_t **b )
 {
@@ -468,23 +421,23 @@ void parse_util_process_extent( const wchar_t *buff,
 }
 
 void parse_util_job_extent( const wchar_t *buff,
-							int pos,
+							size_t pos,
 							const wchar_t **a, 
 							const wchar_t **b )
 {
-	job_or_process_extent( buff,pos,a, b, 0 );	
+	job_or_process_extent( buff,pos,a, b, 0 );
 }
 
 
 void parse_util_token_extent( const wchar_t *buff,
-							  int cursor_pos,
+							  size_t cursor_pos,
 							  const wchar_t **tok_begin,
 							  const wchar_t **tok_end,
 							  const wchar_t **prev_begin, 
 							  const wchar_t **prev_end )
 {
 	const wchar_t *begin, *end;
-	int pos;
+	long pos;
 	wchar_t *buffcpy;
 
 	tokenizer tok;
@@ -525,15 +478,15 @@ void parse_util_token_extent( const wchar_t *buff,
 		 tok_has_next( &tok );
 		 tok_next( &tok ) )
 	{
-		int tok_begin = tok_get_pos( &tok );
-		int tok_end=tok_begin;
+		size_t tok_begin = tok_get_pos( &tok );
+		size_t tok_end = tok_begin;
 
 		/*
 		  Calculate end of token
 		*/
 		if( tok_last_type( &tok ) == TOK_STRING )
 		{
-			tok_end +=wcslen(tok_last(&tok));
+			tok_end += wcslen(tok_last(&tok));
 		}
 		
 		/*
@@ -714,9 +667,9 @@ wchar_t *parse_util_unescape_wildcards( const wchar_t *str )
    token is not quoted.
 
 */
-static wchar_t get_quote( const wchar_t *cmd, int len )
+static wchar_t get_quote( const wchar_t *cmd, size_t len )
 {
-	int i=0;
+	size_t i=0;
 	wchar_t res=0;
 
 	while( 1 )
@@ -780,7 +733,7 @@ void parse_util_get_parameter_info( const wcstring &cmd, const size_t pos, wchar
     
     wchar_t *cmd_tmp = wcsdup(cmd.c_str());
 	cmd_tmp[pos]=0;
-	int cmdlen = wcslen( cmd_tmp );
+	size_t cmdlen = wcslen( cmd_tmp );
 	unfinished = (cmdlen==0);
 	if( !unfinished )
 	{

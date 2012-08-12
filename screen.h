@@ -60,7 +60,10 @@ class screen_data_t
     
     public:
     
-    int cursor[2];
+    struct cursor_t {
+        int x;
+        int y;
+    } cursor;
     
     line_t &add_line(void) {
         line_datas.resize(line_datas.size() + 1);
@@ -147,10 +150,10 @@ class screen_t
 void s_write( screen_t *s, 
 			  const wchar_t *prompt, 
 			  const wchar_t *commandline,
-			  int explicit_len,
+			  size_t explicit_len,
 			  const int *colors, 
 			  const int *indent,
-			  int cursor_pos );
+			  size_t cursor_pos );
 
 /** 
     This function resets the screen buffers internal knowledge about

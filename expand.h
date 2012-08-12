@@ -49,7 +49,10 @@ enum {
     EXPAND_NO_DESCRIPTIONS = 1 << 6,
     
     /** Don't do process expansion */
-    EXPAND_SKIP_PROCESS = 1 << 7
+    EXPAND_SKIP_PROCESS = 1 << 7,
+    
+    /** Don't expand jobs (but you can still expand processes). This is because job expansion is not thread safe. */
+    EXPAND_SKIP_JOBS = 1 << 8
 };
 typedef int expand_flags_t;
 
@@ -190,7 +193,7 @@ int expand_is_clean( const wchar_t *in );
    \param token_pos The position where the expansion begins
    \param error_pos The position on the line to report to the error function.
 */
-void expand_variable_error( parser_t &parser, const wchar_t *token, int token_pos, int error_pos );
+void expand_variable_error( parser_t &parser, const wchar_t *token, size_t token_pos, int error_pos );
 
 /**
    Testing function for getting all process names.

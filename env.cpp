@@ -766,15 +766,14 @@ int env_set(const wcstring &key, const wchar_t *val, int var_mode)
 	if (key == L"umask")
 	{
 		wchar_t *end;
-		int mask;
-        
+
 		/*
          Set the new umask
          */
 		if( val && wcslen(val) )
 		{				
 			errno=0;
-			mask = wcstol( val, &end, 8 );
+			long mask = wcstol( val, &end, 8 );
             
 			if( !errno && (!*end) && (mask <= 0777) && (mask >= 0) )
 			{
@@ -1084,15 +1083,15 @@ env_var_t env_get_string( const wcstring &key )
 	}
 	else if( key == L"COLUMNS" )
 	{
-        return to_string((long)common_get_width());
+        return to_string(common_get_width());
 	}	
 	else if( key == L"LINES" )
 	{
-        return to_string((long)common_get_width());
+        return to_string(common_get_width());
 	}
 	else if( key == L"status" )
 	{
-        return to_string((long)proc_get_last_status());
+        return to_string(proc_get_last_status());
 	}
 	else if( key == L"umask" )
 	{

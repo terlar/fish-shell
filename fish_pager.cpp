@@ -480,11 +480,11 @@ static void completion_print( int cols,
 			      int row_stop,
 			      wchar_t *prefix,
 			      int is_quoted,
-			      std::vector<comp_t *> &lst )
+			      const std::vector<comp_t *> &lst )
 {
 
-	int rows = (lst.size()-1)/cols+1;
-	int i, j;
+	size_t rows = (lst.size()-1)/cols+1;
+	size_t i, j;
 
 	for( i = row_start; i<row_stop; i++ )
 	{
@@ -494,7 +494,7 @@ static void completion_print( int cols,
 
 			int is_last = (j==(cols-1));
 			
-			if( (int)lst.size() <= j*rows + i )
+			if( lst.size() <= j*rows + i )
 				continue;
 
 			el = lst.at(j*rows + i );
@@ -549,9 +549,9 @@ static int completion_try_print( int cols,
 	*/
 	int print=0;
 	
-	int i, j;
+	long i, j;
 	
-	int rows = (lst.size()-1)/cols+1;
+	int rows = (int)((lst.size()-1)/cols+1);
 	
 	int pref_tot_width=0;
 	int min_tot_width = 0;
@@ -573,7 +573,7 @@ static int completion_try_print( int cols,
 		{
 			int pref,min;
 			comp_t *c;
-			if( (int)lst.size() <= j*rows + i )
+			if( lst.size() <= j*rows + i )
 				continue;
 
 			c = lst.at(j*rows + i );
@@ -613,7 +613,7 @@ static int completion_try_print( int cols,
 	}
 	else
 	{
-		int next_rows = (lst.size()-1)/(cols-1)+1;
+		long next_rows = (lst.size()-1)/(cols-1)+1;
 /*		fwprintf( stderr,
   L"cols %d, min_tot %d, term %d, rows=%d, nextrows %d, termrows %d, diff %d\n",
   cols,
@@ -758,8 +758,7 @@ static int completion_try_print( int cols,
 					case PAGE_DOWN:
 					{
 
-						npos = mini( rows - termsize.ws_row+1,
-							     pos + termsize.ws_row-1 );
+						npos = mini( (int)(rows - termsize.ws_row+1), (int)(pos + termsize.ws_row-1) );
 						if( npos != pos )
 						{
 							pos = npos;
@@ -873,11 +872,9 @@ static void mangle_descriptions( wcstring_list_t &lst )
 */
 static void join_completions( wcstring_list_t lst )
 {
-	long i;
-    
     std::map<wcstring, long> desc_table;
 
-	for( i=0; i<(long)lst.size(); i++ )
+	for( size_t i=0; i<lst.size(); i++ )
 	{
 		const wchar_t *item = lst.at(i).c_str();
 		const wchar_t *desc = wcschr( item, COMPLETE_SEP );
@@ -889,7 +886,7 @@ static void join_completions( wcstring_list_t lst )
         prev_idx = desc_table[desc] - 1;
 		if( prev_idx == -1 )
 		{
-            desc_table[desc] = i+1;
+            desc_table[desc] = (long)(i+1);
 		}
 		else
 		{
@@ -954,7 +951,7 @@ static std::vector<comp_t *> mangle_completions( wcstring_list_t &lst, const wch
 			
 		}
 
-		comp->comp_width  += my_wcswidth(prefix)*comp->comp.size() + 2*(comp->comp.size()-1);
+		comp->comp_width  += (int)(my_wcswidth(prefix)*comp->comp.size() + 2*(comp->comp.size()-1));
 		comp->desc_width = comp->desc.empty()?0:my_wcswidth( comp->desc.c_str() );
 		
 		comp->pref_width = comp->comp_width + comp->desc_width + (comp->desc_width?4:0);
