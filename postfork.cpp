@@ -407,10 +407,12 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
         err = posix_spawnattr_setflags(attr, flags);
 
     /* Everybody gets default handlers */
-    sigset_t sigdefault;
-    sigfillset(&sigdefault);
     if (! err && reset_signal_handlers)
+    {
+        sigset_t sigdefault;
+        get_signals_width_handlers(&sigdefault);
         err = posix_spawnattr_setsigdefault(attr, &sigdefault);
+    }
     
     /* No signals blocked */
     sigset_t sigmask;
@@ -424,6 +426,7 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     get_unused_internal_pipes(files_to_close, j->io);
     for (size_t i = 0; ! err && i < files_to_close.size(); i++)
     {
+        printf("Close %d\n", files_to_close.at(i));
         err = posix_spawn_file_actions_addclose(actions, files_to_close.at(i));
     }
     
