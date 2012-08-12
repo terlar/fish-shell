@@ -101,36 +101,46 @@ int set_child_group( job_t *j, process_t *p, int print_errors )
 	return res;
 }
 
-/** Make sure the fd used by this redirection is not used by i.e. a pipe.  */
-static void free_fd(io_chain_t &io_chain, int fd)
+/** Make sure the fd used by each redirection is not used by a pipe.  */
+static void free_redirected_fds_from_pipes(io_chain_t &io_chain)
 {
-    for (size_t idx = 0; idx < io_chain.size(); idx++) 
+    size_t max = io_chain.size();
+    for (size_t i = 0; i < max; i++)
     {
-        io_data_t *io = io_chain.at(idx);
-        if( ( io->io_mode == IO_PIPE ) || ( io->io_mode == IO_BUFFER ) )
+        int fd_to_free = io_chain.at(i)->fd;
+        
+        /* We only have to worry about fds beyond the three standard ones */
+        if (fd_to_free <= 2)
+            continue;
+
+        /* Make sure the fd is not used by a pipe */
+        for (size_t j = 0; j < max; j++)
         {
-            int i;
-            for( i=0; i<2; i++ )
+            /* We're only interested in pipes */
+            io_data_t *possible_conflict = io_chain.at(j);
+            if (possible_conflict->io_mode != IO_PIPE && possible_conflict->io_mode != IO_BUFFER)
+                continue;
+            
+            /* If the pipe is a conflict, dup it to some other value */
+            for (int k=0; k<2; k++)
             {
-                if(io->param1.pipe_fd[i] == fd )
+                /* If it's not a conflict, we don't care */
+                if (possible_conflict->param1.pipe_fd[k] != fd_to_free)
+                    continue;
+                
+                /* Repeat until we have a replacement fd */
+                int replacement_fd = -1;
+                while (replacement_fd < 0)
                 {
-                    while(1)
+                    replacement_fd = dup(fd_to_free);
+                    if (replacement_fd == -1 && errno != EINTR)
                     {
-                        if( (io->param1.pipe_fd[i] = dup(fd)) == -1)
-                        {
-                             if( errno != EINTR )
-                            {
-                                debug_safe_int( 1, FD_ERROR, fd );							
-                                wperror( L"dup" );
-                                FATAL_EXIT();
-                            }
-                        }
-                        else
-                        {
-                            break;
-                        }
+                        debug_safe_int( 1, FD_ERROR, fd_to_free );
+                        wperror( L"dup" );
+                        FATAL_EXIT();
                     }
                 }
+                possible_conflict->param1.pipe_fd[k] = replacement_fd;
             }
         }
 	}
@@ -153,6 +163,7 @@ static int handle_child_io( io_chain_t &io_chain )
 {
 
 	close_unused_internal_pipes( io_chain );
+    free_redirected_fds_from_pipes(io_chain);
 	for (size_t idx = 0; idx < io_chain.size(); idx++)
 	{
         io_data_t *io = io_chain.at(idx);
@@ -165,12 +176,6 @@ static int handle_child_io( io_chain_t &io_chain )
 		if( io->io_mode == IO_FD && io->fd == io->param1.old_fd )
 		{
 			continue;
-		}
-
-		if( io->fd > 2 )
-		{
-			/* Make sure the fd used by this redirection is not used by e.g. a pipe.  */
-			free_fd(io_chain, io->fd );
 		}
 				
 		switch( io->io_mode )
@@ -419,14 +424,15 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     sigemptyset(&sigmask);
     if (! err && reset_sigmask)
         err = posix_spawnattr_setsigmask(attr, &sigmask);
-
+        
+    /* Make sure that our pipes don't use an fd that the redirection itself wants to use */
+    free_redirected_fds_from_pipes(j->io);
     
     /* Close unused internal pipes */
     std::vector<int> files_to_close;
     get_unused_internal_pipes(files_to_close, j->io);
     for (size_t i = 0; ! err && i < files_to_close.size(); i++)
     {
-        printf("Close %d\n", files_to_close.at(i));
         err = posix_spawn_file_actions_addclose(actions, files_to_close.at(i));
     }
     

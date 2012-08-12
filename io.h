@@ -129,9 +129,7 @@ public:
     
     size_t size() const { return std::vector<io_data_t *>::size(); }
     io_data_t *at(size_t idx) const { return std::vector<io_data_t *>::at(idx); }
-    
-    io_chain_t unique() const;
-    
+        
     bool empty() const { return std::vector<io_data_t *>::empty(); }
     
     void push_back(io_data_t *v) { std::vector<io_data_t *>::push_back(v); }
@@ -156,9 +154,6 @@ public:
    Remove the specified io redirection from the chain
 */
 void io_remove(io_chain_t &list, const io_data_t *element);
-
-/** Outputs debugging information about the io chain. */
-void io_chain_debug(const io_chain_t &chain);
 
 /** Make a copy of the specified chain of redirections. Uses operator new. */
 io_chain_t io_duplicate(const io_chain_t &chain);
@@ -200,9 +195,7 @@ io_data_t *io_buffer_create( bool is_input );
 */
 void io_buffer_read( io_data_t *d );
 
-/**
-   Print debug information about the specified IO redirection chain to stderr.
-*/
+/** Print debug information about the specified IO redirection chain to stderr. */
 void io_print( const io_chain_t &chain );
 
 #endif

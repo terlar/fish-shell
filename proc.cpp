@@ -491,6 +491,51 @@ static void handle_child_status( pid_t pid, int status )
 	return;
 }
 
+process_t::process_t() :
+    argv_array(),
+    argv0_narrow(),
+    type(0),
+    actual_cmd(),
+    pid(0),
+    pipe_write_fd(0),
+    pipe_read_fd(0),
+    completed(0),
+    stopped(0),
+    status(0),
+    count_help_magic(0),
+    next(NULL)
+#ifdef HAVE__PROC_SELF_STAT
+    ,last_time(),
+    last_jiffies(0)
+#endif
+{
+}
+    
+process_t::~process_t()
+{
+    if (this->next != NULL)
+        delete this->next;
+}
+
+job_t::job_t(job_id_t jobid) :
+        command_str(),
+        command_narrow(),
+        first_process(NULL),
+        pgid(0),
+        tmodes(),
+        job_id(jobid),
+        io(),
+        flags(0)
+{
+}
+    
+job_t::~job_t()
+{
+    if (first_process != NULL)
+        delete first_process;
+    io_chain_destroy(this->io);
+    release_job_id(job_id);
+}
 
 /* This is called from a signal handler */
 void job_handle_signal ( int signal, siginfo_t *info, void *con )

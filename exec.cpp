@@ -301,7 +301,7 @@ static void launch_process_nofork( process_t *p )
     ASSERT_IS_NOT_FORKED_CHILD();
     
 	char **argv = wcsv2strv(p->get_argv());
-	char **envv = env_export_arr( 0 );
+	char **envv = env_export_arr( false );
     char *actual_cmd = wcs2str(p->actual_cmd.c_str());
 	
     /* Bounce to launch_process. This never returns. */
@@ -556,7 +556,7 @@ void exec( parser_t &parser, job_t *j )
 		   uniprocessor systems.
 		*/
 		if( p->type == EXTERNAL )
-			env_export_arr( 1 );
+			env_export_arr( true );
 		
 		
 		/*
@@ -1095,34 +1095,34 @@ void exec( parser_t &parser, job_t *j )
                     const wchar_t *file = reader_current_filename();
                     const wchar_t *func = parser_t::principal_parser().is_function();
                     printf("fork #%d: forking for '%s' in '%ls:%ls'\n", g_fork_count, actual_cmd, file ? file : L"", func ? func : L"?");
+                
+                    fprintf(stderr, "IO chain for %s:\n", actual_cmd);
+                    io_print(j->io);
                 }
                 
-                //fprintf(stderr, "IO chain for %s:\n", actual_cmd);
-                //io_chain_debug(j->io);
-                
                 /* Prefer to use posix_spawn, since it's faster on some systems */
-                bool use_posix_spawn = false;
+                bool use_posix_spawn = true;
                 if (use_posix_spawn)
                 {
+                    /* Create posix spawn attributes and actions */
                     posix_spawnattr_t attr = posix_spawnattr_t();
                     posix_spawn_file_actions_t actions = posix_spawn_file_actions_t();
                     bool made_it = fork_actions_make_spawn_properties(&attr, &actions, j, p);
                     if (made_it)
                     {
+                        /* We successfully made the attributes and actions; actually call posix_spawn */
                         int spawn_ret = posix_spawn(&pid, actual_cmd, &actions, &attr, argv, envv);
                         if (spawn_ret != 0)
+                        {
                             safe_report_exec_error(spawn_ret, actual_cmd, argv, envv);
+                            /* Make sure our pid isn't set */
+                            pid = 0;
+                        }
+                            
+                        /* Clean up our actions */
                         posix_spawn_file_actions_destroy(&actions);
                         posix_spawnattr_destroy(&attr);
-                        
-                        if (spawn_ret != 0)
-                            pid = 0;
                     }
-                    //set_child_group
-                    //handle_child_io
-                    //signal_reset_handlers
-                    //signal_unblock
-                    
                 }
                 else
                 {

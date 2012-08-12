@@ -189,24 +189,6 @@ void io_chain_t::duplicate_append(const io_chain_t &src)
     }
 }
 
-io_chain_t io_chain_t::unique() const
-{
-    /* Walk our chain backwards. The first time we encounter each fd, append the resulting io_data to the end of the result array. Lastly, reverse the result array. */
-    io_chain_t result;
-    std::set<int> used_fds;
-    for (size_t idx = 0; idx < this->size(); idx++)
-    {
-        io_data_t *data = this->at(idx);
-        if (used_fds.insert(data->fd).second)
-        {
-            /* First ("last") use of this fd */
-            result.push_back(data);
-        }
-    }
-    std::reverse(result.begin(), result.end());
-    return result;
-}
-
 void io_chain_t::destroy()
 {
     for (size_t idx = 0; idx < this->size(); idx++)
@@ -226,12 +208,7 @@ io_chain_t io_duplicate(const io_chain_t &chain)
     return chain.duplicate();
 }
 
-io_chain_t io_unique(const io_chain_t &chain)
-{
-    return chain.unique();
-}
-
-void io_chain_debug(const io_chain_t &chain)
+void io_print(const io_chain_t &chain)
 {
     if (chain.empty())
     {
@@ -308,33 +285,6 @@ const io_data_t *io_chain_get(const io_chain_t &src, int fd) {
 
 io_data_t *io_chain_get(io_chain_t &src, int fd) {
     return src.get_io_for_fd(fd);
-}
-
-
-void io_print( const io_chain_t &chain )
-{
-    for (size_t idx = 0; idx < chain.size(); idx++)
-    {
-        const io_data_t *io = chain.at(idx);
-        debug( 1, L"IO fd %d, type ", io->fd );
-        switch( io->io_mode )
-        {
-            case IO_PIPE:
-                debug( 1, L"PIPE, data %d", io->param1.pipe_fd[io->fd?1:0] );
-                break;
-            
-            case IO_FD:
-                debug( 1, L"FD, copy %d", io->param1.old_fd );
-                break;
-
-            case IO_BUFFER:
-                debug( 1, L"BUFFER" );
-                break;
-                
-            default:
-                debug( 1, L"OTHER" );
-        }
-    }
 }
 
 io_chain_t::io_chain_t(io_data_t *data) : std::vector<io_data_t *>(1, data)
