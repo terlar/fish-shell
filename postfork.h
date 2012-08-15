@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <list>
-#include <spawn.h>
 
 #include "config.h"
 #include "common.h"

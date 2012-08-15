@@ -201,5 +201,7 @@ public:
 extern bool g_log_forks;
 extern int g_fork_count;
 
+extern bool g_use_posix_spawn;
+
 
 #endif

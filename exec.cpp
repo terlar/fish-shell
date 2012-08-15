@@ -1103,7 +1103,7 @@ void exec( parser_t &parser, job_t *j )
                 
 #if FISH_USE_POSIX_SPAWN
                 /* Prefer to use posix_spawn, since it's faster on some systems like OS X */
-                bool use_posix_spawn = true;
+                bool use_posix_spawn = g_use_posix_spawn;
                 if (use_posix_spawn)
                 {
                     /* Create posix spawn attributes and actions */

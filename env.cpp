@@ -101,6 +101,7 @@ struct var_entry_t
 typedef std::map<wcstring, var_entry_t*> var_table_t;
 
 bool g_log_forks = false;
+bool g_use_posix_spawn = false; //will usually be set to true
 
 
 /**
@@ -686,6 +687,10 @@ void env_init(const struct config_paths_t *paths /* or NULL */)
     /* Set g_log_forks */
     env_var_t log_forks = env_get_string(L"fish_log_forks");
     g_log_forks = ! log_forks.missing_or_empty() && from_string<bool>(log_forks);
+    
+    /* Set g_use_posix_spawn. Default to true. */
+    env_var_t use_posix_spawn = env_get_string(L"fish_use_posix_spawn");
+    g_use_posix_spawn = (use_posix_spawn.missing_or_empty() ? true : from_string<bool>(use_posix_spawn));
 }
 
 void env_destroy()
