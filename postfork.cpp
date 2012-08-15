@@ -416,7 +416,7 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     if (! err && reset_signal_handlers)
     {
         sigset_t sigdefault;
-        get_signals_width_handlers(&sigdefault);
+        get_signals_with_handlers(&sigdefault);
         err = posix_spawnattr_setsigdefault(attr, &sigdefault);
     }
     

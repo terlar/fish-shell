@@ -60,6 +60,6 @@ int signal_is_blocked();
 /**
   Returns signals with non-default handlers
 */
-void get_signals_width_handlers(sigset_t *set);
+void get_signals_with_handlers(sigset_t *set);
 
 #endif

@@ -628,7 +628,7 @@ void signal_handle( int sig, int do_handle )
 	sigaction( sig, &act, 0);
 }
 
-void get_signals_width_handlers(sigset_t *set)
+void get_signals_with_handlers(sigset_t *set)
 {
     sigemptyset(set);
 	for( int i=0; lookup[i].desc ; i++ )
