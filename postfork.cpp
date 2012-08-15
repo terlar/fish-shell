@@ -366,6 +366,7 @@ pid_t execute_fork(bool wait_for_threads_to_die)
     return 0;
 }
 
+#if FISH_USE_POSIX_SPAWN
 bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_file_actions_t *actions, job_t *j, process_t *p)
 {
     /* Initialize the output */
@@ -514,6 +515,7 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     
     return ! err;
 }
+#endif //FISH_USE_POSIX_SPAWN
 
 void safe_report_exec_error(int err, const char *actual_cmd, char **argv, char **envv)
 {

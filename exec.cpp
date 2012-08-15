@@ -49,6 +49,7 @@
 #include "expand.h"
 #include "signal.h"
 
+
 #include "parse_util.h"
 
 /**
@@ -1100,7 +1101,8 @@ void exec( parser_t &parser, job_t *j )
                     io_print(j->io);
                 }
                 
-                /* Prefer to use posix_spawn, since it's faster on some systems */
+#if FISH_USE_POSIX_SPAWN
+                /* Prefer to use posix_spawn, since it's faster on some systems like OS X */
                 bool use_posix_spawn = true;
                 if (use_posix_spawn)
                 {
@@ -1125,6 +1127,7 @@ void exec( parser_t &parser, job_t *j )
                     }
                 }
                 else
+#endif
                 {
                     pid = execute_fork(false);
                     if (pid == 0)
