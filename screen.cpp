@@ -59,6 +59,9 @@ efficient way for transforming that to the desired screen content.
  */
 #define INDENT_STEP 4
 
+/** A helper value for an invalid location */
+#define INVALID_LOCATION (screen_data_t::cursor_t(-1, -1))
+
 /**
    Ugly kludge. The internal buffer used to store output of
    tputs. Since tputs external function can only take an integer and
@@ -607,6 +610,19 @@ static void s_write_char( screen_t *s, data_buffer_t *b, wchar_t c )
 	scoped_buffer_t scoped_buffer(b);
 	s->actual.cursor.x+=fish_wcwidth( c );
 	writech( c );
+    if (s->actual.cursor.x == s->actual_width && allow_soft_wrap())
+    {
+        s->soft_wrap_location.x = 0;
+        s->soft_wrap_location.y = s->actual.cursor.y + 1;
+        
+        /* If auto_right_margin is set, then the cursor sticks to the right edge when it's in the rightmost column, so reflect that fact */
+        if (auto_right_margin)
+            s->actual.cursor.x--;
+    }
+    else
+    {
+        s->soft_wrap_location = INVALID_LOCATION;
+    }
 }
 
 /**
@@ -655,17 +671,13 @@ static size_t line_shared_prefix(const line_t &a, const line_t &b)
 /* We are about to output one or more characters onto the screen at the given x, y. If we are at the end of previous line, and the previous line is marked as soft wrapping, then tweak the screen so we believe we are already in the target position. This lets the terminal take care of wrapping, which means that if you copy and paste the text, it won't have an embedded newline.  */
 static bool perform_any_impending_soft_wrap(screen_t *scr, int x, int y)
 {
-    if (y > 0 && x == 0 && scr->actual.cursor.x == scr->actual_width && y == scr->actual.cursor.y + 1 && allow_soft_wrap())
+    if (x == scr->soft_wrap_location.x && y == scr->soft_wrap_location.y)
     {
-        /* Check if the line really is soft wrapped */
-        size_t prev_line = (size_t)(y-1);
-        //fprintf(stderr, "\n\nTry soft warpping %d, %d, %d, %d\n\n", x, y, y < scr->desired.line_count(), scr->desired.line(prev_line).is_soft_wrapped);
-        if (prev_line <= scr->desired.line_count() && scr->desired.line(prev_line).is_soft_wrapped)
+        /* We can soft wrap; but do we want to? */
+        if (scr->desired.line(y - 1).is_soft_wrapped && allow_soft_wrap())
         {
-            /* It is, so pretend we're already on the next line, because when we output that's what the terminal will do */
-            scr->actual.cursor.x = x;
-            scr->actual.cursor.y = y;
-            return true;
+            /* Yes. Just update the actual cursor; that will cause us to elide emitting the commands to move here, so we will just output on "one big line" (which the terminal soft wraps */
+            scr->actual.cursor = scr->soft_wrap_location;
         }
     }
     return false;
@@ -753,7 +765,7 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
         /* Now actually output stuff */
         for ( ; j < o_line.size(); j++)
         {
-            perform_any_impending_soft_wrap(scr, (int)j, (int)i);
+            perform_any_impending_soft_wrap(scr, current_width, (int)i);
             s_move( scr, &output, current_width, (int)i );
             s_set_color( scr, &output, o_line.color_at(j) );
             s_write_char( scr, &output, o_line.char_at(j) );
@@ -969,5 +981,16 @@ void s_reset( screen_t *s, bool reset_cursor )
 	}
 	fstat( 1, &s->prev_buff_1 );
 	fstat( 2, &s->prev_buff_2 );
+}
+
+screen_t::screen_t() :
+    desired(),
+    actual(),
+    actual_prompt(),
+    actual_width(0),
+    soft_wrap_location(INVALID_LOCATION),
+    need_clear(0),
+    prev_buff_1(), prev_buff_2(), post_buff_1(), post_buff_2()
+{
 }
 
