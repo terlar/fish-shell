@@ -2358,7 +2358,7 @@ static void reader_super_highlight_me_plenty( size_t match_highlight_pos )
     reader_sanity_check();
     
 	background_highlight_context_t *ctx = new background_highlight_context_t(data->command_line, match_highlight_pos, data->highlight_function);
-	iothread_perform(threaded_highlight, highlight_complete, ctx);
+	//iothread_perform(threaded_highlight, highlight_complete, ctx);
     highlight_search();
     
     /* Here's a hack. Check to see if our autosuggestion still applies; if so, don't recompute it. Since the autosuggestion computation is asynchronous, this avoids "flashing" as you type into the autosuggestion. */

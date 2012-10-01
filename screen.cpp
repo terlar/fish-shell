@@ -54,9 +54,6 @@ efficient way for transforming that to the desired screen content.
 #include "screen.h"
 #include "env.h"
 
-/* Whether we permit soft wrapping. If so, in some cases we don't explicitly move to the second physical line on a wrapped logical line; instead we just output it. */
-#define ALLOW_SOFT_WRAP 0
-
 /**
    The number of characters to indent new blocks
  */
@@ -126,7 +123,8 @@ static size_t next_tab_stop( size_t in )
 }
 
 // PCA for term256 support, let's just detect the escape codes directly
-static int is_term256_escape(const wchar_t *str) {
+static int is_term256_escape(const wchar_t *str)
+{
     // An escape code looks like this: \x1b[38;5;<num>m 
     // or like this: \x1b[48;5;<num>m 
     
@@ -145,6 +143,13 @@ static int is_term256_escape(const wchar_t *str) {
     
     // success
     return len;
+}
+
+/* Whether we permit soft wrapping. If so, in some cases we don't explicitly move to the second physical line on a wrapped logical line; instead we just output it. */
+static bool allow_soft_wrap(void)
+{
+    // Should we be looking at eat_newline_glitch as well?
+    return !! auto_right_margin;
 }
 
 /**
@@ -458,10 +463,10 @@ static void s_desired_append_char( screen_t *s,
              */
 			if( (s->desired.cursor.x + cw) > screen_width )
 			{
-#if ALLOW_SOFT_WRAP
-                /* Current line is soft wrapped */
+                /* Current line is soft wrapped (assuming we support it) */
                 s->desired.line(s->desired.cursor.y).is_soft_wrapped = true;
-#endif
+                //fprintf(stderr, "\n\n1 Soft wrapping %d\n\n", s->desired.cursor.y);
+                
                 line_no = (int)s->desired.line_count();
                 s->desired.add_line();
 				s->desired.cursor.y++;
@@ -475,6 +480,14 @@ static void s_desired_append_char( screen_t *s,
             line_t &line = s->desired.line(line_no);
             line.append(b, c);
 			s->desired.cursor.x+= cw;
+            
+            /* Maybe wrap the cursor to the next line, even if the line itself did not wrap. This avoids wonkiness in the last column. */
+            if (s->desired.cursor.x >= screen_width)
+            {
+                line.is_soft_wrapped = true;
+                s->desired.cursor.x = 0;
+                s->desired.cursor.y++;
+            }
 			break;
 		}
 	}
@@ -585,15 +598,6 @@ static void s_set_color( screen_t *s, data_buffer_t *b, int c )
 		   highlight_get_color( (uc>>16)&0xffff, true ) );	
 }
 
-static void wrap_cursor(screen_t *s)
-{
-    while (s->actual.cursor.x > s->actual_width)
-    {
-        s->actual.cursor.x -= s->actual_width;
-        s->actual.cursor.y++;
-    }
-}
-
 /**
    Convert a wide character to a multibyte string and append it to the
    buffer.
@@ -602,22 +606,7 @@ static void s_write_char( screen_t *s, data_buffer_t *b, wchar_t c )
 {
 	scoped_buffer_t scoped_buffer(b);
 	s->actual.cursor.x+=fish_wcwidth( c );
-    wrap_cursor(s);
 	writech( c );
-}
-
-/**
-   Convert a wide string to a multibyte string and append it to the
-   buffer. Returns the width.
-*/
-static int s_write_string( screen_t *s, data_buffer_t *b, const wcstring &str )
-{
-	scoped_buffer_t scoped_buffer(b);
-    int width = fish_wcswidth(str.c_str(), str.size());
-	writestr(str.c_str());
-    s->actual.cursor.x += width;
-    wrap_cursor(s);
-    return width;
 }
 
 /**
@@ -666,11 +655,12 @@ static size_t line_shared_prefix(const line_t &a, const line_t &b)
 /* We are about to output one or more characters onto the screen at the given x, y. If we are at the end of previous line, and the previous line is marked as soft wrapping, then tweak the screen so we believe we are already in the target position. This lets the terminal take care of wrapping, which means that if you copy and paste the text, it won't have an embedded newline.  */
 static bool perform_any_impending_soft_wrap(screen_t *scr, int x, int y)
 {
-#if ALLOW_SOFT_WRAP
-    if (x == 0 && scr->actual.cursor.x == scr->actual_width && y == scr->actual.cursor.y + 1)
+    if (y > 0 && x == 0 && scr->actual.cursor.x == scr->actual_width && y == scr->actual.cursor.y + 1 && allow_soft_wrap())
     {
         /* Check if the line really is soft wrapped */
-        if (y < scr->desired.line_count() && scr->desired.line(y).is_soft_wrapped)
+        size_t prev_line = (size_t)(y-1);
+        //fprintf(stderr, "\n\nTry soft warpping %d, %d, %d, %d\n\n", x, y, y < scr->desired.line_count(), scr->desired.line(prev_line).is_soft_wrapped);
+        if (prev_line <= scr->desired.line_count() && scr->desired.line(prev_line).is_soft_wrapped)
         {
             /* It is, so pretend we're already on the next line, because when we output that's what the terminal will do */
             scr->actual.cursor.x = x;
@@ -678,7 +668,6 @@ static bool perform_any_impending_soft_wrap(screen_t *scr, int x, int y)
             return true;
         }
     }
-#endif
     return false;
 }
 
@@ -729,12 +718,18 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
         
         /* Compute how much we should skip. At a minimum we skip over the prompt. But also skip over the shared prefix of what we want to output now, and what we output before, to avoid repeatedly outputting it. */
         size_t shared_prefix = line_shared_prefix(o_line, s_line);
+        
         if (shared_prefix > 0)
         {
             int prefix_width = fish_wcswidth(&o_line.text.at(0), shared_prefix);
             if (prefix_width > skip_remaining)
                 skip_remaining = prefix_width;
         }
+        
+        /* Don't skip over the last two characters in a soft-wrapped line, so that we maintain soft-wrapping */
+        if (o_line.is_soft_wrapped)
+            skip_remaining = mini(skip_remaining, (size_t)(scr->actual_width - 2));
+        
         
         /* Skip over skip_remaining width worth of characters */
         size_t j = 0;
@@ -758,7 +753,7 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
         /* Now actually output stuff */
         for ( ; j < o_line.size(); j++)
         {
-            perform_any_impending_soft_wrap(scr, current_width, (int)i);
+            perform_any_impending_soft_wrap(scr, (int)j, (int)i);
             s_move( scr, &output, current_width, (int)i );
             s_set_color( scr, &output, o_line.color_at(j) );
             s_write_char( scr, &output, o_line.char_at(j) );
@@ -791,6 +786,7 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
 	
     /* We have now synced our actual screen against our desired screen. Note that this is a big assignment! */
     scr->actual = scr->desired;
+    auto_right_margin;
 }
 
 /**
