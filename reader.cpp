@@ -749,12 +749,19 @@ static void remove_backward()
         data->buff_pos -= 1;
         width = fish_wcwidth(data->command_line.at(data->buff_pos));
         data->command_line.erase(data->buff_pos, 1);        
-    } while (width == 0 && data->buff_pos > 0);
+    } while (0 && width == 0 && data->buff_pos > 0);
     data->command_line_changed();
     data->suppress_autosuggestion = true;
 
 	reader_super_highlight_me_plenty( data->buff_pos );
-
+    
+    //fprintf(stderr, "\n\n%ls", data->command_line.c_str());
+    //fputs("\n\n\n\n", stderr);
+    FILE *fp = fopen("/tmp/output.txt", "a");
+    fprintf(fp, "%lu\n", data->command_line.size());
+    fprintf(fp, "%ls\n", data->command_line.c_str());
+    fclose(fp);
+    
 	reader_repaint();
 
 }
@@ -1192,6 +1199,7 @@ static void autosuggest_completed(autosuggestion_context_t *ctx, int result) {
 
 
 static void update_autosuggestion(void) {
+return;
     /* Updates autosuggestion. We look for an autosuggestion if the command line is non-empty and if we're not doing a history search.  */
 #if 0
     /* Old non-threaded mode */
@@ -1199,7 +1207,7 @@ static void update_autosuggestion(void) {
     if (can_autosuggest()) {
         history_search_t searcher = history_search_t(*data->history, data->command_line, HISTORY_SEARCH_TYPE_PREFIX);
         if (searcher.go_backwards()) {
-            data->autosuggestion = searcher.current_item();
+            data->autosuggestion = searcher.current_item().str();
         }
     }
 #else

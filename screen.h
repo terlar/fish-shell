@@ -21,6 +21,11 @@ struct line_t
 {
     std::vector<wchar_t> text;
     std::vector<int> colors;
+    bool is_soft_wrapped;
+    
+    line_t() : text(), colors(), is_soft_wrapped(false)
+    {
+    }
     
     void clear(void)
     {

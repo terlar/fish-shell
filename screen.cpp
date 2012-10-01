@@ -54,6 +54,9 @@ efficient way for transforming that to the desired screen content.
 #include "screen.h"
 #include "env.h"
 
+/* Whether we permit soft wrapping. If so, in some cases we don't explicitly move to the second physical line on a wrapped logical line; instead we just output it. */
+#define ALLOW_SOFT_WRAP 0
+
 /**
    The number of characters to indent new blocks
  */
@@ -423,6 +426,8 @@ static void s_desired_append_char( screen_t *s,
 		case L'\n':
 		{
 			int i;
+            /* Current line is definitely hard wrapped */
+            s->desired.line(s->desired.cursor.y).is_soft_wrapped = false;
             s->desired.create_line(s->desired.line_count());
 			s->desired.cursor.y++;
 			s->desired.cursor.x=0;
@@ -453,6 +458,10 @@ static void s_desired_append_char( screen_t *s,
              */
 			if( (s->desired.cursor.x + cw) > screen_width )
 			{
+#if ALLOW_SOFT_WRAP
+                /* Current line is soft wrapped */
+                s->desired.line(s->desired.cursor.y).is_soft_wrapped = true;
+#endif
                 line_no = (int)s->desired.line_count();
                 s->desired.add_line();
 				s->desired.cursor.y++;
@@ -493,6 +502,9 @@ static int s_writeb( char c )
 */
 static void s_move( screen_t *s, data_buffer_t *b, int new_x, int new_y )
 {
+    if (s->actual.cursor.x == new_x && s->actual.cursor.y == new_y)
+        return;
+    
 	int i;
 	int x_steps, y_steps;
 	
@@ -573,6 +585,15 @@ static void s_set_color( screen_t *s, data_buffer_t *b, int c )
 		   highlight_get_color( (uc>>16)&0xffff, true ) );	
 }
 
+static void wrap_cursor(screen_t *s)
+{
+    while (s->actual.cursor.x > s->actual_width)
+    {
+        s->actual.cursor.x -= s->actual_width;
+        s->actual.cursor.y++;
+    }
+}
+
 /**
    Convert a wide character to a multibyte string and append it to the
    buffer.
@@ -581,6 +602,7 @@ static void s_write_char( screen_t *s, data_buffer_t *b, wchar_t c )
 {
 	scoped_buffer_t scoped_buffer(b);
 	s->actual.cursor.x+=fish_wcwidth( c );
+    wrap_cursor(s);
 	writech( c );
 }
 
@@ -594,6 +616,7 @@ static int s_write_string( screen_t *s, data_buffer_t *b, const wcstring &str )
     int width = fish_wcswidth(str.c_str(), str.size());
 	writestr(str.c_str());
     s->actual.cursor.x += width;
+    wrap_cursor(s);
     return width;
 }
 
@@ -638,6 +661,25 @@ static size_t line_shared_prefix(const line_t &a, const line_t &b)
             break;
     }
     return idx;
+}
+
+/* We are about to output one or more characters onto the screen at the given x, y. If we are at the end of previous line, and the previous line is marked as soft wrapping, then tweak the screen so we believe we are already in the target position. This lets the terminal take care of wrapping, which means that if you copy and paste the text, it won't have an embedded newline.  */
+static bool perform_any_impending_soft_wrap(screen_t *scr, int x, int y)
+{
+#if ALLOW_SOFT_WRAP
+    if (x == 0 && scr->actual.cursor.x == scr->actual_width && y == scr->actual.cursor.y + 1)
+    {
+        /* Check if the line really is soft wrapped */
+        if (y < scr->desired.line_count() && scr->desired.line(y).is_soft_wrapped)
+        {
+            /* It is, so pretend we're already on the next line, because when we output that's what the terminal will do */
+            scr->actual.cursor.x = x;
+            scr->actual.cursor.y = y;
+            return true;
+        }
+    }
+#endif
+    return false;
 }
 
 /**
@@ -699,7 +741,7 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
         for ( ; j < o_line.size(); j++)
         {
             int width = fish_wcwidth(o_line.char_at(j));
-            if (skip_remaining <= width)
+            if (skip_remaining < width)
                 break;
             skip_remaining -= width;
             current_width += width;
@@ -716,6 +758,7 @@ static void s_update( screen_t *scr, const wchar_t *prompt )
         /* Now actually output stuff */
         for ( ; j < o_line.size(); j++)
         {
+            perform_any_impending_soft_wrap(scr, current_width, (int)i);
             s_move( scr, &output, current_width, (int)i );
             s_set_color( scr, &output, o_line.color_at(j) );
             s_write_char( scr, &output, o_line.char_at(j) );
