@@ -255,6 +255,38 @@ var color_scheme_fish_default = {
     'history_current' : '--bold'
 };
 
+var color_scheme_fish_plain = {
+    'name': 'fish plain',
+    'colors': [],
+    'preferred_background': 'black',
+
+    'autosuggestion': 'brblack --italics',
+    'command': '--bold',
+    'param': 'normal',
+    'redirection': 'normal',
+    'comment': 'brblack --italics',
+    'error': 'red',
+    'escape': 'brblack',
+    'operator': 'normal',
+    'quote': 'normal',
+    'end': 'normal',
+    'search_match' : '--reverse',
+    'fish_pager_color_completion' : 'normal',
+    'fish_pager_color_description' : 'normal',
+    'fish_pager_color_prefix' : '--bold',
+    'fish_pager_color_progress' : 'normal',
+    'normal' : 'normal',
+    'user' : 'normal',
+    'host' : 'normal',
+    'valid_path' : '--underline',
+    'cwd' : 'normal',
+    'cwd_root' : 'normal',
+    'match' : 'normal',
+    'selection' : '--reverse',
+    'cancel' : '--reverse',
+    'history_current' : '--bold'
+};
+
 
 var TomorrowTheme = {
     tomorrow_night: {'Background': '1d1f21', 'Current Line': '282a2e', 'Selection': '373b41', 'Foreground': 'c5c8c6', 'Comment': '969896', 'Red': 'cc6666', 'Orange': 'de935f',  'Yellow': 'f0c674', 'Green': 'b5bd68', 'Aqua': '8abeb7', 'Blue': '81a2be', 'Purple': 'b294bb'
